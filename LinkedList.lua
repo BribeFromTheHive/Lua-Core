@@ -1,28 +1,44 @@
 --[[
-    Doubly-Linked List v1.4.2.1 by Wrda, Eikonium and Bribe
+    Doubly-Linked List v1.5.0.0 by Wrda, Eikonium and Bribe, with special thanks to Jampion
     ------------------------------------------------------------------------------
     A script that enables linking objects together with "previous" and "next"
     syntax.
     ------------------------------------------------------------------------------
-API:
+LinkedList API:
     LinkedList.create() -> LinkedListHead
-    - Creates a new LinkedList head that can have nodes inserted to itself.
+    - Creates a new LinkedListHead that can have nodes inserted to itself.
+
+    list.next -> next item in the same list
+    list.prev -> previous item in the same list
 
     list:insert([value : any, after : boolean]) -> LinkedListNode
-    - Inserts *before* the given head/node unless "after" is true.
-    - If a value is passed, the system will attach it as a generic "value"
-    - Returns the inserted node that was added to the list (if addition was successful).
+    - Inserts *before* the given LinkedList object unless "after" is true.
+    - If a value is passed, the system will attach it to the node as a generic "value"
+    - Returns the inserted node that was added to the list.
 
-    list:remove(node : LinkedListNode)
-    - Removes a node from whatever list it is a part of.
-
-    for node in list:loop([backwards : boolean]) do [stuff] end
+    for node in LinkedList.loop(start : LinkedList[, finish : LinkedList , backwards : boolean]) do [stuff] end
     - Shows how to iterate over all nodes in "list".
-    
+    - An example of how to iterate while skipping the first and last nodes of the list:
+        for node in list.next:loop(list.prev) do print(node.value) end
+
+API specific to LinkedListHead:
+    list.remove(node)
+    - Removes a node from list.
+
+    list.n
+    - The number of LinkedListNodes in the list.
+
     fromList:merge(intoList : LinkedList[, mergeBefore : boolean])
     - Removes all nodes of list "fromList" and adds them to the end of list "intoList" (or
       at the beginning, if "mergeBefore" is true).
       "fromList" needs to be the linked list head, but "into" can be anywhere in that list.
+
+LinkedListNode API:
+    node:remove()
+    - Removes a node from whatever list it is a part of.
+
+    node.value
+    - Whatever value might have been assigned from list:insert([value])
 ]]
 ---@class LinkedList     : table
 ---@field head LinkedListHead
@@ -39,7 +55,7 @@ LinkedList = {}
 LinkedList.__index = LinkedList
 
 ---Creates a new LinkedList head node.
----@return LinkedListHead
+---@return LinkedListHead new_list_head
 function LinkedList.create()
     local head = {}
     setmetatable(head, LinkedList)
@@ -54,7 +70,7 @@ end
 ---Inserts *before* the given head/node, unless "backward" is true.
 ---@param value? any
 ---@param insertAfter? boolean
----@return LinkedListNode node that was added to the list (if addition was successful)
+---@return LinkedListNode new_node
 function LinkedList:insert(value, insertAfter)
     local node = {}   ---@type LinkedListNode
     setmetatable(node, LinkedList)
@@ -73,44 +89,53 @@ function LinkedList:insert(value, insertAfter)
     return node
 end
 
----Removes a node from whatever list it is a part of. A node cannot be a part of
----more than one list at a time, so there is no need to pass the containing list as
----an argument.
----@param node LinkedListNode
----@return boolean wasRemoved
-function LinkedList:remove(node)
-    node.prev.next = node.next
-    node.next.prev = node.prev
-    self.n = self.n - 1
+---Removes a node from whatever list it is a part of.
+function LinkedList:remove()
+    self.prev.next = self.next
+    self.next.prev = self.prev
+    self.head.n = self.head.n - 1
 end
 
 ---Merges LinkedListHead "from" to a LinkedList "into"
 ---@param from LinkedListHead
 ---@param into LinkedList
----@param mergeBefore boolean
+---@param mergeBefore? boolean
 function LinkedList.merge(from, into, mergeBefore)
     local head = into.head
     into = mergeBefore and into.next or into
-    from.n = 0
+    
     for node in from:loop() do node.head = head end
+    head.n = head.n + from.n
+    from.n = 0
     
     from.next.prev = into.prev
     into.prev.next = from.next
     into.prev = from.prev
     from.prev.next = into
+
+    --reset the original list to a simple LinkedListHead
+    from.next = from
+    from.prev = from
 end
 
----Enables the generic for-loop for LinkedLists.
----Syntax: "for node in LinkedList.loop(list) do print(node) end"
----Alternative Syntax: "for node in list:loop() do print(node) end"
----@param list LinkedList
+---Loop a LinkedList from a starting node/head to a finish node/head in either direction.
+---@param start LinkedList
+---@param finish? LinkedList
 ---@param backward? boolean
-function LinkedList.loop(list, backward)
-    list = list.head        ---@type LinkedListHead
-    local loopNode = list   ---@type LinkedListNode
+---@return function
+function LinkedList.loop(start, finish, backward)
     local direction = backward and "prev" or "next"
-    return function()
-        loopNode = loopNode[direction]
-        return loopNode ~= list and loopNode or nil
+    local head = start.head
+    if finish then --loop from one point to another, skipping the head node.
+        return function()
+            start = start[direction]
+            if start == finish then return end
+            return start == head and start[direction] or start
+        end
     end
-end --End of LinkedList library
+    return function() --loop from start to head node.
+        start = start[direction]
+        return start ~= head and start or nil
+    end
+end
+--End of LinkedList library
