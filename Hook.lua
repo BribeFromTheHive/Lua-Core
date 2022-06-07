@@ -1,266 +1,112 @@
-if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-linked-list.339392/
---[[--------------------------------------------------------------------------------------
-    Hook v4.1.2.0 by Bribe, with very special thanks to:
-    Eikonium and Jampion for bug reports, feature improvements, teaching me new things.
-    MyPad for teaching me new things
-    Wrda and Eikonium for the better LinkedList approach
-----------------------------------------------------------------------------------------]]
-    Hook = {}
-    
-    local _LOW_PRIO     = -0.1          -- a number to represent what should be the lowest priority for a before-hook (lower values run first).
-    local _HIGH_PRIO    = 9001          -- a number to represent what should be the lowest priority for an after-hook (lower values run first).
-    local _SKIP_HOOK    = "skip hook"   -- when this is returned from a Hook.addSimple function, the hook will stop.
-    
-    local hookBefore    = {} ---@type Hook[]        --stores a list of functions that are called prior to a hooked function.
-    local hookAfter     = {} ---@type Hook[]        --stores a list of functions that are called after a hooked function.
-    local hookedFunc    = {} ---@type function[]    --stores a list of overriden functions
-    
-    ---@class Hook      :LinkedListHead
-    ---@field add       function
-    ---@field addSimple function
-    ---@field flush     function
-    ---@field func      function
-    ---@field loop      fun(list) -> hookNode
+--[[
+    Hook 5.0 - better speed, features, code length, intuitive and has no requirements.
 
-    ---@class hookNode  :LinkedListNode
-    ---@field priority  number
-    ---@field head      Hook
-    ---@field func      fun(hook:Hook)
+    Core API has been reduced from Hook.add, Hook.addSimple, Hook.remove, Hook.flush to just AddHook
+    Secondary API has been reduced from hook.args, hook.returned, hook.old, hook.skip to just old(...)
+    AddHook returns two functions: 1) old function* and 2) function to call to remove the hook.**
+    
+    *The old function will point to either the originally-hooked function, or it will point to the next-lower priority
+        "AddHook" function a user requested. Not calling "oldFunc" means that any lower-priority callbacks will not
+        execute. It is therefore key to make sure to prioritize correctly: higher numbers are called before lower ones.
 
-    ---@class hookInstance:table
-    ---@field args      table
-    ---@field call      function    --original function that was hooked
-    ---@field skip      boolean
-    ---@field returned  table
---[[--------------------------------------------------------------------------------------
-    Internal functions
-----------------------------------------------------------------------------------------]]
-    ---@param oldFunc string
-    ---@param parent? table
-    ---@return table
-    ---@return table hookedFuncParent
-    ---@return function? hooked_func_or_nil
-    ---@return function hooked_func
-    local function parseArgs(oldFunc, parent)
-        parent = parent or _G
-        local hfp = hookedFunc[parent]
-        local hf = hfp and hfp[oldFunc]
-        return parent, hfp, hf, hf or parent[oldFunc]
-    end
+"Classic" way of hooking in Lua is shown below, but doesn't allow other hooks to take a higher priority, nor can it be removed safely.
+    local oldFunc = BJDebugMsg
+    BJDebugMsg = print
 
---[[--------------------------------------------------------------------------------------
-    Hook.add
-    Args: string oldFunc, function userFunc[, number priority, table parent, function default]
-          @ oldFunc is a string that represents the name of a function (e.g. "CreateUnit")
-          @ userFunc is the function you want to be called when the original function is
-            called*.
-          @ priority is an optional parameter that determines whether your hook takes place
-            "before" the original function is called, or after. Broken down like this:
-            
-            (a) if "priority" is "nil", "false" or a "negative number", it is treated as a
-                "before hook". If "nil" or "false", "_LOW_PRIO" will be assigned as the priority.
-            (b) if "priority" is "true", "0" or a "positive number", it is treated as an
-                "after hook". If "true", it defaults to "_HIGH_PRIO".
-            
-          @ parent is an optional parameter for where the oldFunc is hosted. By default,
-            it assumes a global (_G table) such as "BJDebugMsg".
-          @ default is a function that you can inject into the table in case that variable
-            is not found. If the variable is not found and a function is not passed as a
-            default, the addition will fail.
+The below allows other hooks to coexist with it, based on a certain priority, and can be removed:
+    local oldFunc, removeFunc = AddHook("BJDebugMsg", print)
+
+A small showcase of what you can do with the API:
     
-    Returns two items:
-        1. The original function you are hooking (if successful) or nil (if failed).
-        2. A table to represent your hook registry. This is part of a linked list belonging
-           to the function you hooked and aligned with whether it is a "before" or "after"
-           hook. Its most relevant use would be to be passed to "Hook.remove(userHookTable)",
-           as that is the way to remove a single hook in version 4.0.
-    
-    *The function you specify in Hook.add can take exactly one argument: a table. That
-    table has the following properties within itself:
-    
-    args
-    (table)
-        Contains the original arguments passed during a hook. Useful for referencing in an
-        "after hook". Can be modified by a "before hook".
-    
-    returned
-    (table or nil)
-        Contains a table of the return value(s) from "before" hooks and (if applicable) the
-        original function. This is either "nil", or usually only holds a single index. To
-        initialize this correctly, use table.pack(returnVal[, returnVal2, returnVal3, ...]).
-    
-    old
-    (function)
-        The original, native function that has been hooked (in case you want to call it).
-    
-    skip
-    (boolean)
-    Note: Set this to "true" from within a before-hook callback function to prevent the
-          original function from being called. Users can check if this is set to true if
-          they want to change the behavior of their own hooks accordingly.
-----------------------------------------------------------------------------------------]]
-    ---@param oldFunc string
-    ---@param userFunc fun(hook:table)
-    ---@param priority? number
-    ---@param parent? table
-    ---@param default? function
-    ---@return function original_function
-    ---@return hookNode newUserNode
-    function Hook.add(oldFunc, userFunc, priority, parent, default)
-        if type(oldFunc) ~= "string" or type(userFunc) ~= "function" then
-            --print "Hook.add Error: The first argument must be a string, the second must be a function."
-            return
+    local oldFunc, removeFunc --remember to declare locals before any function that uses them
+   
+    oldFunc, removeFunc = AddHook("BJDebugMsg", function(s)
+        if want_to_display_to_all_players then
+            oldFunc(s) --this either calls the native function, or allows lower-priority hooks to run.
+        elseif want_to_remove_hook then
+            removeFunc() --removes just this hook from BJDebugMsg
+        elseif want_to_remove_all_hooks then
+            removeFunc(true) --removes all hooks on BJDebugMsg
+        else
+            print(s) --not calling the native function means that lower-priority hooks will be skipped.
         end
-        local parent, hfp, hf, old = parseArgs(oldFunc, parent)
-        
-        if not old or type(old) ~= "function" then
-            if default then
-                old             = default
-                parent[oldFunc] = default
-            else
-                --print("Hook.add Error: Tried to hook a function that doesn't exist: " .. oldFunc .. ".\nTry calling Hook.add from a Global Initialization function.")
-                return
-            end
+    end)
+
+Version 5.0 also introduces a "metatable" boolean as the last parameter, which will get or create a new metatable
+for the parentTable parameter, and assign the "oldFunc" within the metatable (or "default" if no oldFunc exists).
+This is envisioned to be useful for hooking __index and __newindex on the _G table, such as with Global Variable
+Remapper.
+]]--
+---@param oldFunc string
+---@param userFunc function
+---@param priority? number
+---@param parentTable? table
+---@param default? function
+---@param metatable? boolean
+---@return function old_function
+---@return function call_this_to_remove
+function AddHook(oldFunc, userFunc, priority, parentTable, default, metatable)
+    parentTable = parentTable or _G
+    if default and metatable then
+        metatable = getmetatable(parentTable)
+        if not metatable then
+            metatable = {}
+            setmetatable(parentTable, metatable)
         end
-        if not hf then
-            if not hfp then
-                hfp                 = {}
-                hookedFunc[parent]  = hfp
-            end
-            hfp[oldFunc]    = old ---@type function
-            local hb        = LinkedList.create()   ---@type Hook
-            hookBefore[old] = hb
-            hb.func         = old
-            local ha        = LinkedList.create()   ---@type Hook
-            hookAfter[old]  = ha
-            ha.func         = old
-            parent[oldFunc] =
-            function(...)
-                local this = {args = table.pack(...), call = old, skip = false } ---@type hookInstance
-                
-                for userNode in hb:loop() do userNode.func(this, userNode) end
-                
-                local r
-                if not this.skip then
-                    r = table.pack(old(table.unpack(this.args, 1, this.args.n)))
-                    if r.n > 0 then this.returned = r end
-                end
-                r = this.returned
-                if not (r and type(r) == "table" and r.n and r.n > 0) then
-                    r = nil; this.returned = nil
-                --else
-                    --print("Hook report: returning " .. r.n .. " values.")
-                end
-                
-                for userNode in ha:loop() do userNode.func(this, userNode) end
-                
-                if r then return table.unpack(r, 1, r.n) end
-            end
-        end
-        
-        priority = priority or _LOW_PRIO
-        if priority == true then priority = _HIGH_PRIO end
-        
-        --This creates and inserts newUserNode into the corresponding table with taking into consideration the priority of each item.
-        local tab = priority < 0 and hookBefore[old] or hookAfter[old]
-        local insertPoint = tab.head
-        local newUserNode
-        for node in tab:loop() do
-            if node.priority > priority then insertPoint = node; break end
-        end
-        newUserNode = insertPoint:insert() ---@type hookNode
-        newUserNode.func = userFunc
-        newUserNode.priority = priority
-        newUserNode.remove = Hook.remove
-        
-        --print("indexing")
-        return old, newUserNode
+        parentTable = metatable
     end
-    
-    ---Remove a registered hook by passing the node returned from the second
-    ---return value of Hook.add.
-    ---@param node hookNode
-    ---@return integer number_of_hooks_remaining
-    function Hook.remove(node)
-        local r = 0
-        local head = node.head
-        if head then
-            head:remove(node)
-            r = hookBefore[head.func].n + hookAfter[head.func].n
-            if r == 0 then
-                Hook.flush(head.func)
-            end
-        end
-        return r
-    end
-    
---[[--------------------------------------------------------------------------------------
-    Hook.flush
-    Args: string oldFunc[, table parent]
-    Desc: Purges all hooks associated with the given function string and sets the original
-          function back inside of the parent table.
-----------------------------------------------------------------------------------------]]
-    
-    ---Hook.flush
-    ---@param oldFunc string
-    ---@param parent? table
-    function Hook.flush(oldFunc, parent)
-        local parent, hfp, hf, old = parseArgs(oldFunc, parent)
-        if hf then
-            parent[oldFunc] = old
-            hookBefore[old] = nil
-            hookAfter[old]  = nil
-            hfp[oldFunc]    = nil
-        end
-    end
-    
---[[--------------------------------------------------------------------------------------
-    The user-function parameters and behavior are different from Hook.add. This uses
-    the original format I wanted for hook-behavior, but it became clear that there
-    were scenarios where the user should be able to do more.
-    
-    "Before hook" parameters are the arguments of the original function call. This is
-    useful in a situation where you don't want to unpack the args yourself to see them in
-    an intuitive way, and don't need the additional complexities of the table to determine
-    what you want to do.
-    
-    Return: If anything other than "nil" is returned, it will prevent any additional
-            "before" hooks with a lower priority from running, as well as prevent the
-            original function from being called. If returning a value other than "nil"
-            would break the expectations of the original function, return the string
-            "stop hook" instead.
-    
-    "After hook"
-    ------------
-    Args: Takes the return value(s) as parameter(s), if there was any return value.
-----------------------------------------------------------------------------------------]]
-    ---@param oldFunc string
-    ---@param userFunc function
-    ---@param priority? number
-    ---@param parent? table
-    ---@param default? function
-    ---@return function original_function
-    ---@return hookNode newUserNode
-    function Hook.addSimple(oldFunc, userFunc, priority, parent, default)
-        return Hook.add(oldFunc,
-        function(hook)
-            local r = hook.returned
-            if priority and (priority == true or priority >= 0) then
-                if r then
-                    userFunc(table.unpack(r, 1, r.n))
+    local index     = 2
+    local hookStr   = "_hooked_"..oldFunc --You can change the prefix if you want.
+    local hooks     = rawget(parentTable, hookStr)
+    priority        = priority or 0
+    if hooks then
+        local fin   = #hooks
+        repeat
+            if hooks[index][2] > priority then break end
+            index = index + 1
+        until index > fin
+    else
+        hooks = {{
+            rawget(parentTable, oldFunc) or default,
+            function(where, instance)
+                local n = #hooks
+                if where > n then
+                    hooks[where] = instance
+                elseif where == n and not instance then
+                    hooks[where] = nil
+                    rawset(parentTable, oldFunc, hooks[where-1][1])
                 else
-                    userFunc()
-                end
-            elseif not hook.skip and not r then
-                r = userFunc(table.unpack(hook.args, 1, hook.args.n))
-                if r and #r > 0 then
-                    if r[1] ~= _SKIP_HOOK then
-                        hook.returned = table.pack(r)
+                    if instance then
+                        table.insert(hooks, where, instance)
+                        where = where + 1
+                    else
+                        table.remove(hooks, where)
                     end
-                    hook.skip = true
+                    for i = where, n do
+                        hooks[i][3](i) --when an index is added or removed in the middle of the list, re-map the subsequent indices.
+                    end
                 end
             end
-        end, priority, parent, default)
+        }}
+        rawset(parentTable, hookStr, hooks)
     end
-    
-end --End of Hook library
+    hooks[1][2](index, {
+        userFunc,
+        priority,
+        function(i) index = i end
+    })
+    if index == #hooks then
+        rawset(parentTable, oldFunc, userFunc)
+    end
+    return function(...)
+        return hooks[index-1][1](...) --this is the "old" function, and allows "..." without packing/unpacking.
+    end, function(removeAll)
+        local fin = #hooks
+        if removeAll or fin == 2 then
+            rawset(parentTable, hookStr, nil)
+            rawset(parentTable, oldFunc, hooks[1][1])
+        else
+            hooks[1][2](index)
+        end
+    end
+end
