@@ -1,8 +1,19 @@
-do Struct = {} --vJass-style Struct version 1.6.0.0 by Bribe
+do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
     
     --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
     
-    ---Constructor: Struct([optional_parent_struct])
+    --In case vJass2Lua misses any string concatenation, this metatable hook will pick it up and correct it.
+    getmetatable("").__add = function(obj, obj2) return obj .. obj2 end
+
+    ---@class vJass : table
+    ---@field interface function
+    ---@field module function
+    ---@field implement function
+    ---@field textmacro function
+    ---@field runtextmacro function
+    ---@field struct Struct
+
+    ---Constructor: vJass.struct([optional_parent_struct]) or just Struct()
     ---@class Struct : table
     ---@field allocate fun(from_struct)
     ---@field deallocate fun(struct_instance)
@@ -15,22 +26,142 @@ do Struct = {} --vJass-style Struct version 1.6.0.0 by Bribe
     ---@field super Struct
     ---@field isType fun(struct_to_compare, other_struct)
     ---@field environment fun(struct_to_iterate)
-    ---@field interface fun(default_return_value) -> interface
     ---@field _operatorset fun(your_struct, var_name, your_func)
     ---@field _operatorget fun(your_struct, var_name, your_func)
     ---@field _getindex fun(your_struct, index)
     ---@field _setindex fun(your_struct, index, value)
-
-    ---Constructor: Struct.interface([default_value])
-    ---@class interface : table
-
-    ---Constructor: Struct.module(module_function)
-    ---@class Struct.module : table
-    ---@field private init boolean
-    ---@field public implement function
     
     local rawget = rawget
+    local macros = {}
+
+    ---@param macroName string
+    ---@param args? table string[] --a table containing any number of strings
+    ---@param macro string|function --the code that is to be "inserted"
+    function vJass.textmacro(macroName, args, macro, ...)
+        macros[macroName] = {macro, args}
+    end --index this macro as a table and store its name and arguments.
+
+    ---@param macroName string
+    ---@param ... string --any number of strings
+    function vJass.runtextmacro(macroName, ...)
+        local storedMacro = macros[macroName]
+        if storedMacro then
+            local macro = storedMacro[1] --get the macro string
+            if type(macro) == "function" then
+                macro(...)
+                return
+            end
+            local macroargs = storedMacro[2] --get the args of textmacro (pointers)
+            
+            if macroargs then
+                local args = {...} --get the args of runtextmacro (values)
+                local n = #macroargs
+
+                -- the below string pattern checks for $word_with_or_without_underscores$.
+                -- Need to use double percentages in World Editor, but a single percentage on each should be used when testing code outside of World Editor.
+                load(macro:gsub("%%$([%%w_]+)%%$", function(arg)
+                    for i = 1, n do -- search all of the textmacro's registered arguments to find out which of the pointers match
+                        if arg == macroargs[i] then
+                            return args[i] --substitute the runtextmacro arg string at the matching pointer position
+                        end
+                    end
+                end))()
+            else
+                load(macro)()
+            end
+        end
+    end
+
+    ---Create a new module that can be implemented by any struct.
+    local modules = {}
+    local moduleQueue = {}
     
+    ---@param moduleName string
+    ---@param moduleFunc fun(struct : Struct)
+    function vJass.module(moduleName, privacy, scope, moduleFunc)
+        local module, init = {}, {}
+        if privacy ~= "" then
+            modules[scope..moduleName] = module
+        else
+            modules[moduleName] = module
+        end
+        moduleQueue[#moduleQueue+1] = module
+        module.implement = function(struct)
+            if not init[struct] then
+                init[struct] = true
+                moduleFunc(struct)
+            end
+        end
+    end
+    
+    ---Implement a module by name
+    ---@param moduleName string
+    ---@param struct Struct
+    function vJass.implement(moduleName, scope, struct)
+        local module = modules[scope..moduleName]
+        if not module then
+            module = modules[moduleName]
+        end
+        if module then
+            module.implement(struct)
+        end
+    end
+    
+    local interface, defaults
+    
+    --Does its best to automatically handle the vJass "interface" concept.
+    ---@param default any
+    ---@return table
+    function vJass.interface(default)
+        interface = interface or {
+            __index = function(tab, key)
+                local dflt = rawget(Struct, key)
+                if not dflt then
+                    return defaults[tab]
+                end
+                return dflt
+            end
+        }
+        local new = setmetatable({}, interface)
+        defaults = defaults or {}
+        defaults[new] = default and function() return default end or DoNothing
+        return new
+    end
+
+    do
+        local mt
+        vJass.array2D = function(w, h)
+            if not mt then
+                mt = {
+                    __index = function(self, key)
+                        local new = {}
+                        rawset(self, key, new)
+                        return new
+                    end
+                }
+            end
+            return setmetatable({width = w, height = h, size=w*h}, mt)
+        end
+    end
+
+    vJass.hook = function(funcName, userFunc)
+        local old
+        if AddHook then
+            old = AddHook(funcName, function(...)
+                userFunc(...)
+                old(...)
+            end)
+        else
+            old = _G[funcName]
+            _G[funcName] = function(...)
+                userFunc(...)
+                old(...)
+            end
+        end
+    end
+
+    vJass.struct = Struct --just for naming consistency with the above vJass-prefixed methods.
+
     local mt = {
         __index = function(self, key)
             local get = rawget(self, "_getindex") --declaring a _getindex function in your struct enables it to act as method operator []
@@ -72,13 +203,12 @@ do Struct = {} --vJass-style Struct version 1.6.0.0 by Bribe
     
     ---Deallocate and call the stub method onDestroy via myStructInstance:destroy().
     function Struct.deallocate(self)
-        setmetatable(self, Struct.destroyed)
         for struct in self:inception() do
             struct.onDestroy(self)
         end
+        setmetatable(self, Struct.destroyed)
     end
     
-    local moduleQueue = {}
     local structQueue = {}
 
     ---Acquire another struct's keys via myStruct:extends(otherStruct)
@@ -108,11 +238,6 @@ do Struct = {} --vJass-style Struct version 1.6.0.0 by Bribe
         return self --vJass typecasting... shouldn't be used in Lua, but there could be cases where this will work without the user having to change anything.
     end
     
-    --More vJass typecasting that really should be fixed by the user rather than a resource like this. Comparison to zero will break.
-    ---@param struct Struct
-    ---@return Struct same_struct
-    function integer(struct) return struct end
-    
     --stub methods:
     Struct.create = Struct.allocate
     Struct.destroy = Struct.deallocate
@@ -126,41 +251,6 @@ do Struct = {} --vJass-style Struct version 1.6.0.0 by Bribe
         for struct in parent:inception() do
             if struct == self then return true end
         end
-    end
-     
-    ---Create a new module that can be implemented by any struct.
-    ---@param moduleFunc fun(struct : Struct)
-    ---@return Struct.module new_module
-    function Struct.module(moduleFunc)
-        local module = {}
-        module.init = {}
-        moduleQueue[#moduleQueue+1] = module
-        module.implement = function(struct)
-            if not module.init[struct] then
-                module.init[struct] = true
-                moduleFunc(struct)
-            end
-        end
-        return module
-    end
-    
-    --Does its best to automatically handle the vJass "interface" concept.
-    local defaults
-    local interface
-    function Struct.interface(default)
-        interface = interface or {
-            __index = function(tab, key)
-                local default = rawget(Struct, key)
-                if not default then
-                    return defaults[tab]
-                end
-                return default
-            end
-        }
-        local new = setmetatable({}, interface)
-        defaults = defaults or {}
-        defaults[new] = default and function() return default end or DoNothing
-        return new
     end
 
     mt = {}
