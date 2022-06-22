@@ -1,10 +1,28 @@
-do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
+do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.0.0 by Bribe
     
     --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
-    
+    --Requires optional Global Variable Remapper: https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
+
+    local rawget = rawget
+    local rawset = rawset
+    local getmetatable = getmetatable
+    local setmetatable = setmetatable
+
     --In case vJass2Lua misses any string concatenation, this metatable hook will pick it up and correct it.
     getmetatable("").__add = function(obj, obj2) return obj .. obj2 end
 
+    --Extract the globals declarations from the "globals" block so we can remap them via Global Variable Remapper to use globals.var = blah syntax.
+    do
+        local oldGlobals = globals
+        function globals(func)
+            local t = {}
+            func(t)
+            for _,v in pairs(t) do
+                GlobalRemap(v, function() return globals[v] end, function(val) globals[v] = val end)
+            end
+            oldGlobals(func)
+        end
+    end
     ---@class vJass : table
     ---@field interface function
     ---@field module function
@@ -31,7 +49,6 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
     ---@field _getindex fun(your_struct, index)
     ---@field _setindex fun(your_struct, index, value)
     
-    local rawget = rawget
     local macros = {}
 
     ---@param macroName string
@@ -42,7 +59,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
     end --index this macro as a table and store its name and arguments.
 
     ---@param macroName string
-    ---@param ... string --any number of strings
+    ---@param ... string string1,string2,string3,etc.
     function vJass.runtextmacro(macroName, ...)
         local storedMacro = macros[macroName]
         if storedMacro then
@@ -77,19 +94,27 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
     local moduleQueue = {}
     
     ---@param moduleName string
-    ---@param moduleFunc fun(struct : Struct)
+    ---@param privacy? string private
+    ---@param scope? string SCOPE_PREFIX
+    ---@param moduleFunc fun(module : table, struct : Struct)
     function vJass.module(moduleName, privacy, scope, moduleFunc)
         local module, init = {}, {}
-        if privacy ~= "" then
+        if type(privacy) == "string" and privacy ~= "" and scope then
             modules[scope..moduleName] = module
         else
+            if type(privacy) == "function" then
+                moduleFunc = privacy
+            end
             modules[moduleName] = module
         end
-        moduleQueue[#moduleQueue+1] = module
         module.implement = function(struct)
             if not init[struct] then
                 init[struct] = true
-                moduleFunc(struct)
+                local private = {}
+                moduleFunc(private, struct)
+                if private.onInit then
+                    moduleQueue[#moduleQueue+1] = private.onInit
+                end
             end
         end
     end
@@ -199,7 +224,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
         return newInstance
     end
     
-    Struct.destroyed = {__mode = "v"}
+    Struct.destroyed = {__mode = "k"}
     
     ---Deallocate and call the stub method onDestroy via myStructInstance:destroy().
     function Struct.deallocate(self)
@@ -327,11 +352,11 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.0.1.0 by Bribe
     
     if OnGlobalInit then
         OnGlobalInit(function()
-            for module in ipairs(moduleQueue) do
-                if module.onInit then pcall(module.onInit) end
-            end
+            for init in ipairs(moduleQueue) do pcall(init) end
+
             for struct in ipairs(structQueue) do
-                if struct.onInit then pcall(struct.onInit) end
+                local init = rawget(struct, "onInit")
+                if init then pcall(init) end
             end
             moduleQueue, structQueue = nil, nil
         end)
