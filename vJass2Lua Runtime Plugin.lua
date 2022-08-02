@@ -1,4 +1,4 @@
-do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.0.0 by Bribe
+do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.1.0 by Bribe
     
     --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
     --Requires optional Global Variable Remapper: https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
@@ -12,6 +12,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.0.0 by Bribe
     getmetatable("").__add = function(obj, obj2) return obj .. obj2 end
 
     --Extract the globals declarations from the "globals" block so we can remap them via Global Variable Remapper to use globals.var = blah syntax.
+    --Although quite a bit of a hack, it gets the job done without the parser knowing which variables need to be processed like this.
     do
         local oldGlobals = globals
         function globals(func)
@@ -155,7 +156,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.0.0 by Bribe
 
     do
         local mt
-        vJass.array2D = function(w, h)
+        local getMt = function()
             if not mt then
                 mt = {
                     __index = function(self, key)
@@ -165,7 +166,19 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.0.0 by Bribe
                     end
                 }
             end
-            return setmetatable({width = w, height = h, size=w*h}, mt)
+            return mt
+        end
+        vJass.array2D = function(w, h)
+            return setmetatable({width = w, height = h, size=w*h}, getMt())
+        end
+        vJass.dynamicArray = function(w,h)
+            local newArray = Struct()
+            h = h or 1
+            newArray.width = w
+            newArray.height = h
+            newArray.size = w*h
+            newArray._getindex = getMt().__index
+            return newArray
         end
     end
 
@@ -260,7 +273,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.0.0 by Bribe
             structQueue[#structQueue+1] = struct
             return struct
         end
-        return self --vJass typecasting... shouldn't be used in Lua, but there could be cases where this will work without the user having to change anything.
+        return parent --vJass typecasting... shouldn't be used in Lua, but there could be cases where this will work without the user having to change anything.
     end
     
     --stub methods:
