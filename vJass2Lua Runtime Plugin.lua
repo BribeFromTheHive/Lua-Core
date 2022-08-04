@@ -1,4 +1,4 @@
-do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.1.0 by Bribe
+do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.0 by Bribe
     
     --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
     --Requires optional Global Variable Remapper: https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
@@ -77,7 +77,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.1.0 by Bribe
 
                 -- the below string pattern checks for $word_with_or_without_underscores$.
                 -- Need to use double percentages in World Editor, but a single percentage on each should be used when testing code outside of World Editor.
-                load(macro:gsub("%%$([%%w_]+)%%$", function(arg)
+                load(macro:gsub("%%$([%%w_%%.]+)%%$", function(arg)
                     for i = 1, n do -- search all of the textmacro's registered arguments to find out which of the pointers match
                         if arg == macroargs[i] then
                             return args[i] --substitute the runtextmacro arg string at the matching pointer position
@@ -195,6 +195,57 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.1.1.0 by Bribe
                 userFunc(...)
                 old(...)
             end
+        end
+    end
+
+    do
+        local keys = 0
+        vJass.key = function()
+            keys = keys + 1
+            return keys
+        end
+    end
+
+    --takes myFunction.name syntax, generates a string in the _G table to reference the function.
+    --the function could be local or part of a struct, neither of which will work with ExecuteFunc.
+    do
+        local vJassStringPrefix = "vJass2LuaNamePrefix"
+        local funcRef = {}
+        vJass.name = function(func)
+            local prefix = funcRef[func]
+            if prefix then
+                return prefix
+            end
+            prefix = vJassStringPrefix..vJass.key()
+            funcRef[func] = prefix
+            _G[prefix] = func
+        end
+    end
+
+    do
+        local trig
+        local args
+        local lastFunc
+
+        local function proxyCallFunc(how, func, ...)
+            if not trig then
+                trig = CreateTrigger() --only use one trigger for all evals/execs instead of one for each.
+                local function proxyCaller()
+                    return lastFunc(table.unpack(args))
+                end
+                TriggerAddCondition(trig, Filter(proxyCaller))
+                TriggerAddAction(trig, proxyCaller)
+            end
+            lastFunc = func
+            args = table.pack(...)
+            return how(trig)
+        end
+
+        vJass.evaluate = function(func, ...)
+            return proxyCallFunc(TriggerEvaluate, func, ...)
+        end
+        vJass.execute = function(func, ...)
+            proxyCallFunc(TriggerExecute, func, ...)
         end
     end
 
