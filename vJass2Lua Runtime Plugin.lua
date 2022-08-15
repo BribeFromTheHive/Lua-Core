@@ -1,4 +1,4 @@
-do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.1 by Bribe
+do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
     
     --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
     --Requires optional Global Variable Remapper: https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
@@ -360,7 +360,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.1 by Bribe
         --first check the initial struct, then check extended structs (if any), then check the main Struct library, or finally check if it's a global
         return rawget(environment.struct, key) or getter(key) or rawget(Struct, key) or rawget(_G, key)
     end
-    mt.__newindex = environment.struct
+    mt.__newindex = function(_,key,val) rawset(environment.struct, key, val) end
     
     ---Complicated, but allows invisible encapsulation via:
     ---do local _ENV = myStruct:environment()
