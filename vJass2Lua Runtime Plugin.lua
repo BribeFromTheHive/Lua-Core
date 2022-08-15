@@ -416,9 +416,9 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.1 by Bribe
     
     if OnGlobalInit then
         OnGlobalInit(function()
-            for init in ipairs(moduleQueue) do pcall(init) end
+            for _,init in ipairs(moduleQueue) do pcall(init) end
 
-            for struct in ipairs(structQueue) do
+            for _,struct in ipairs(structQueue) do
                 local init = rawget(struct, "onInit")
                 if init then pcall(init) end
             end
