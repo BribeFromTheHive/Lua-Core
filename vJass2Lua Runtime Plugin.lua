@@ -1,4 +1,4 @@
-do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.0 by Bribe
+do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.1 by Bribe
     
     --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
     --Requires optional Global Variable Remapper: https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
@@ -187,13 +187,13 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.0.0 by Bribe
         if AddHook then
             old = AddHook(funcName, function(...)
                 userFunc(...)
-                old(...)
+                return old(...)
             end)
         else
             old = _G[funcName]
             _G[funcName] = function(...)
                 userFunc(...)
-                old(...)
+                return old(...)
             end
         end
     end
