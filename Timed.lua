@@ -1,6 +1,6 @@
-if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-linked-list.339392
+OnLibraryInit("LinkedList", --https://www.hiveworkshop.com/threads/definitive-doubly-linked-list.339392
 --[[--------------------------------------------------------------------------------------
-    Timed Call and Echo v1.2.3.0, code structure credit to Eikonium and Jesus4Lyf
+    Timed Call and Echo v1.2.4.0, code structure credit to Eikonium and Jesus4Lyf
     
     Timed.call([delay, ]userFunc)
     -> Call userFunc after 'delay' seconds. Delay defaults to 0 seconds.
@@ -12,7 +12,7 @@ if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-link
     Node API (for the tables returned by Timed.echo):
         node.elapsed -> the number of seconds that 'node' has been iterating for.
 ----------------------------------------------------------------------------------------]]
-    
+function()
     local _TIMEOUT = 0.03125 --default echo timeout
     
     ---@class Timed : LinkedListHead
@@ -42,7 +42,7 @@ if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-link
             if not zeroList then
                 zeroList = {}
                 _ZERO_TIMER = _ZERO_TIMER or CreateTimer()
-                TimerStart(_ZERO_TIMER, 0.00, false, 
+                TimerStart(_ZERO_TIMER, 0.00, false,
                 function()
                     local tempList = zeroList
                     zeroList = nil
@@ -50,14 +50,14 @@ if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-link
                 end)
             end
             zeroList[#zeroList + 1] = userFunc or delay
-            return
+        else
+            local t = CreateTimer()
+            TimerStart(t, delay, false,
+            function()
+                DestroyTimer(t)
+                userFunc()
+            end)
         end
-        local t = CreateTimer()
-        TimerStart(t, delay, false,
-        function()
-            DestroyTimer(t)
-            userFunc()
-        end)
     end
  
     local lists = {} ---@type Timed[]
@@ -102,7 +102,7 @@ if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-link
                 for tNode in list:loop() do
                     tNode.elapsed = tNode.elapsed + timeout
                     if tNode:func() then --function can return true to remove itself from the list.
-                        list:remove(tNode)
+                        tNode:remove()
                     end
                 end
                 -- delayed add to list
@@ -124,4 +124,4 @@ if LinkedList then --https://www.hiveworkshop.com/threads/definitive-doubly-link
         newNode.elapsed = elapsed
         return newNode
     end
-end
+end)
