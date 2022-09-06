@@ -322,7 +322,7 @@ function() UnitEvent={}
                         unitTable.alive = nil
                         runEvent("onDeath", unitTable)
 
-                    elseif unitTable.transporter or not IsUnitType(unit, UNIT_TYPE_HERO) then
+                    elseif not unitTable.transporter or not IsUnitType(unit, UNIT_TYPE_HERO) then
                         --The unit may have just started reincarnating.
                         checkAfter(unitTable)
                     end
