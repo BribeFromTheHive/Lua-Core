@@ -3,9 +3,10 @@ OnLibraryInit({
     "GlobalRemap",                  --https://www.hiveworkshop.com/threads/global-variable-remapper.339308
     "RegisterAnyPlayerUnitEvent",   --https://www.hiveworkshop.com/threads/collection-gui-repair-kit.317084/
     "CreateEvent"                   --https://www.hiveworkshop.com/threads/event-gui-friendly.339451/
+    --PreciseWait*                  --https://www.hiveworkshop.com/threads/precise-wait-gui-friendly.316960/
 },
 --[[
-Lua Unit Event 1.0
+Lua Unit Event 1.1
 
 Supports linked events that allow your trigger to Wait until another event runs!
 
@@ -13,15 +14,17 @@ Variable names have been completely changed from all prior Unit Event incarnatio
 > All real variable event names are now prefixed with OnUnit...
 > All array references (unit properties) are now prefixed with UnitEvent_
 > Lua users can access a unit's properties via UnitEvent[unit].property (e.g. reincarnating/cargo)
-> Lua users can easily add a GUI property to a unit via UnitEvent.addProperty("udg_PropertyName", "luaPropertyName")
->>> The first parameter is accessed via GUI, the second is accessed via UnitEvent[unit].luaPropertyName
-> UnitUserData (custom value of unit) has been completely removed. This is the first unit indexer to not use UnitUserData nor hashtables.
+> Lua users can easily add a readonly GUI property to a unit via UnitEvent.addProperty("propertyName")
+>>> GUI accesses it via UnitEvent_propertyName, the second is readable and writable within Lua via UnitEvent[unit].propertyName
+> UnitUserData (custom value of unit) has been completely removed. This is the first unit event/indexer to not use UnitUserData nor hashtables.
 >>> UnitEvent_unit is the subject unit of the event.
 >>> UnitEvent_index is an integer in GUI, but points to a the unit.
 >>> UnitEvent_setKey lets you assign a unit to the key.
 >>> UnitEvent_getKey is an integer in GUI, but points to the unit you assigned as the key.
 >>>>> Lua doesn't care about array max sizes, nor the type of information used as an index in that array (because it uses tables and not arrays).
 >>>>> GUI is over 20 years old and can easily be fooled. As long as the variable is defined with the correct type, it doesn't care what happens to that variable behind the scenes.
+
+*Needed for GUI support; PreciseWait doesn't list any extra API for OnLibraryInit to check for, but it ensures that triggeractions have coroutines, which are necessary for events that wait for each other.
 --]]
 function() UnitEvent={}
 
@@ -60,43 +63,42 @@ function() UnitEvent={}
 --]]
 
     local eventList={}
-    local makeAPI = function(luaName, ...)
-        local register, run = CreateEvent(...)
-        eventList[luaName]  = run
-        UnitEvent[luaName]  = register
+    local udg_prefix="udg_OnUnit"
+    local makeAPI = function(name, prevEvent)
+        UnitEvent["on"..name],
+        eventList["on"..name] = CreateEvent(udg_prefix..name, prevEvent and (udg_prefix..prevEvent) or 0)
     end
     local unitIndices={} ---@type UnitEventTable[]
 
     --onIndexed and onCreation occur at roughly the same time, but the unit's creation should be used instead as it will have more data.
     --Combined, they are the counterparts to onRemoval.
-    makeAPI("onIndexed",  "udg_OnUnitIndexed", 0)
-    makeAPI("onCreation", "udg_OnUnitCreation", "udg_OnUnitIndexed")
-    makeAPI("onRemoval",  "udg_OnUnitRemoval",  "udg_OnUnitCreation")
+    makeAPI("Indexed")
+    makeAPI("Creation", "Indexed")
+    makeAPI("Removal", "Creation")
 
     --counterparts (though revival doesn't only come from reincarnation):
-    makeAPI("onReincarnating", "udg_OnUnitReincarnating", "udg_OnUnitCreation")
-    makeAPI("onRevival",       "udg_OnUnitRevival",       "udg_OnUnitReincarnating")
+    makeAPI("Reincarnating", "Creation")
+    makeAPI("Revival", "Reincarnating")
     
     --perfect counterparts:
-    makeAPI("onLoaded",   "udg_OnUnitLoaded",   "udg_OnUnitCreation")
-    makeAPI("onUnloaded", "udg_OnUnitUnloaded", "udg_OnUnitLoaded")
+    makeAPI("Loaded", "Creation")
+    makeAPI("Unloaded", "Loaded")
     
     --stand-alone events:
-    makeAPI("onTransform", "udg_OnUnitTransform", "udg_OnUnitCreation")
-    makeAPI("onDeath",     "udg_OnUnitDeath",     "udg_OnUnitIndexed")
+    makeAPI("Transform", "Creation")
+    makeAPI("Death", "Indexed")
     
-    --perfect counterparts:
-    makeAPI("onActive",  "udg_OnUnitActive", 0)
-    makeAPI("onPassive", "udg_OnUnitPassive", "udg_OnUnitActiveEvent")
+    --perfect counterparts that generalize all but the "transform" event:
+    makeAPI("Active")
+    makeAPI("Passive", "Active")
 
     ---@param unit unit
     ---@return UnitEventTable
     UnitEvent.__index = function(_, unit) return unitIndices[unit] end
     
-    ---@param udgName string
-    ---@param luaName string
-    UnitEvent.addProperty = function(udgName, luaName)
-        GlobalRemapArray(udgName, function(unit) return unitIndices[unit][luaName] end)
+    ---@param name string
+    UnitEvent.addProperty = function(name)
+        GlobalRemapArray("udg_UnitEvent_"..name, function(unit) return unitIndices[unit][name] end)
     end
 
     ---@class UnitEventTable : table
@@ -133,18 +135,18 @@ function() UnitEvent={}
         GlobalRemap("udg_UnitEvent_index", getEventUnit) --fools GUI into thinking unit is an integer
     end
     --add a bunch of read-only arrays to access GUI data. I've removed the "IsUnitAlive" array as the GUI living checks are fixed with the GUI Enhancer Colleciton.
-    UnitEvent.addProperty("udg_UnitEvent_preplaced",    "preplaced")
-    UnitEvent.addProperty("udg_UnitEvent_unitType",     "unitType")
-    UnitEvent.addProperty("udg_UnitEvent_reincarnating","reincarnating")
-    UnitEvent.addProperty("udg_UnitEvent_transporter",  "transporter")
-    UnitEvent.addProperty("udg_UnitEvent_summoner",     "summoner")
+    UnitEvent.addProperty("preplaced")
+    UnitEvent.addProperty("unitType")
+    UnitEvent.addProperty("reincarnating")
+    UnitEvent.addProperty("transporter")
+    UnitEvent.addProperty("summoner")
     
     do
         local cargo = udg_UnitEvent_cargo
         if cargo then
             DestroyGroup(cargo[0])
             DestroyGroup(cargo[1])
-            UnitEvent.addProperty("udg_UnitEvent_cargo", "cargo")
+            UnitEvent.addProperty("cargo")
         end
     end
     
@@ -162,15 +164,18 @@ function() UnitEvent={}
             runEvent("onPassive", unitTable)
         end
     end
+    local function getFunc(active)
+        return function(unitTable) (active and setActive or setPassive)(unitTable) end
+    end
+
+    UnitEvent.onCreation(getFunc(true), 2, true)
+    UnitEvent.onUnloaded(getFunc(true), 2, true)
+    UnitEvent.onRevival(getFunc(true), 2, true)
     
-    UnitEvent.onCreation(setActive, 2, true)
-    UnitEvent.onUnloaded(setActive, 2, true)
-    UnitEvent.onRevival(setActive, 2, true)
-    
-    UnitEvent.onLoaded(setPassive, 2, true)
-    UnitEvent.onReincarnating(setPassive, 2, true)
-    UnitEvent.onDeath(setPassive, 2, true)
-    UnitEvent.onRemoval(setPassive, 2, true)
+    UnitEvent.onLoaded(getFunc(), 2, true)
+    UnitEvent.onReincarnating(getFunc(), 2, true)
+    UnitEvent.onDeath(getFunc(), 2, true)
+    UnitEvent.onRemoval(getFunc(), 2, true)
     
     --UnitEvent.onIndex(function(dex) print(tostring(dex.unit).."/"..GetUnitName(dex.unit).." has been indexed.") end)
     
