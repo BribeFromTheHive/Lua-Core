@@ -3,142 +3,178 @@ OnLibraryInit({         --requires https://www.hiveworkshop.com/threads/global-i
     --,"GlobalRemap"    --optional https://www.hiveworkshop.com/threads/global-variable-remapper.339308
 }, function()
 --[[
-CreateEvent v1.0
+CreateEvent v1.2
 
 CreateEvent is built for GUI support, event linking via coroutines, simple events
-(e.g. Heal Event) or complex event systems such as Spell Event and Damage Engine.
+(e.g. Heal Event), binary events (like Unit Indexer) or complex event systems such as
+Spell Event, Damage Engine and Unit Event.
+
+There are three main functions to keep in mind for the global API:
+
+CreateEvent
+-----------
+The absolute core, and is really just far too complicated to be able to outline what it
+does in this description box. Reading through the code in the comments below, or looking
+at the example code, will help to try to get your head around what's going on.
+
+WaitForEvent
+------------
+Useful only when linking events together, and is used to suspend your running function
+until the chosen event is called.
+
+ControlEventRecursion
+---------------------
+Useful only if wanting recursion for a specific function to be able to exceed a certain
+point, but also useful for debugging (as it returns the current depth and max depth).
 
 Due to optional parameters/return values, the API supports a very simple or very
 complex environment, depending on how you choose to use it. It is also easily
 extensible, so it can be used to support API for other event libraries.
 ]]
 local events={}
-local rootFuncList,eventStr2Num={},{}
-local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, universalCaller, globalList
+local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef
 local weakTable={__mode="k"}
+local userFuncList=setmetatable({}, weakTable)
 
----@param eventStr?             string                          Reserved only for GUI trigger registration
----@param prevEventRef          integer|string                  If 0, will be first in a chain of events. If an existing event, will be added to that list.
----@param maxEventDepth?        integer                         defaults to 1 if nil. Only in very few cases should this be changed.
----@param funcSanitizer?        fun(userFunc:function):function takes the user's function and returns whatever you want (e.g. a wrapper func, or nil to prevent the registration).
----@return fun(userFunc:function, priority?:number, manualControl?:boolean):nextEvent:function,removeEvent:fun(pause:boolean) registerEvent
----@return fun(...)         runEvent        call this with any number of arguments to run all functions registered to this event.  
----@return function         removeEvent     call this to remove the event completely.
----@return integer|string   eventIndex      useful in multi-event-sequences to identify the previous event in a chain.
-function CreateEvent(eventStr, prevEventRef, maxEventDepth, funcSanitizer)
-    local thisEvent, registerEvent, running, removeEventHook, removeTRVE, unpauseList, userFuncList
-    
-    thisEvent=createEventIndex()--each event needs a unique numerical index.
+---@param eventStr?         string      - Reserved only for GUI trigger registration
+---@param isLinkable?       boolean     - If true, will use event linking to bind events when possible.
+---@param maxEventDepth?    integer     - Defaults to 1. If 0, events are forbidden to branch off of each other.
+---@param customRegister?   fun(userFunc:function, continue:function, firstReg?:boolean, trigRef?:trigger, opCode?:limitop, priority?:number):function,function
+---@return fun(userFunc:function, priority?:number, manualControl?:boolean):nextEvent:function, removeOrPause:fun(pause:boolean) registerEvent
+---@return fun(...)         runEvent    - Run all functions registered to this event. The first parameter should be a unique index, and if the second parameter is a function, it will be executed as a "one time event", without being registered.
+---@return function         removeEvent - Call this to remove the event completely.
+---@return integer          eventIndex  - If Lua users want to use "WaitForEvent", they need this value in order to know what to wait for.
+function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
+    local thisEvent   = createEventIndex()  -- each event needs a unique numerical index.
+    events[thisEvent] = DoNothing           -- use a dummy function to enable Hook without having to use it as a default function.
+    maxEventDepth     = maxEventDepth or 1  -- apply the default recusion depth allowance for when none is specified.
+    --Declare top-level variables needed for use within this particular event.
+    local removeEventHook, unpauseList, trigRef, opCode
+    local registerEvent=function(userFunc, priority, disablePausing, manualControl)
+        local evaluator, wrapper, nextEvent, firstReg
+        
+        --all data is indexed by the user's function. So, for linked events, the user should pass the
+        --same function to each of them, to ensure that they can be connected via one harmonious coroutine:
+        local funcRef=userFuncList[userFunc]
 
-    events[thisEvent]=DoNothing --use a dummy function to enable Hook without having to use it as a default function.
-
-    if prevEventRef then        --a reference tracker is needed to link certain events to each other (like UnitIndexEvent/UnitDeindexEvent)
-        if prevEventRef==0 then --no previous reference, but is designated as an event which WILL be used in a linked event sequence.
-            userFuncList=setmetatable({}, weakTable)--Tracks the user functions to detect already-linked functions, so it knows when to apply coroutines
-            rootFuncList[thisEvent]=userFuncList    --Index the func list to the root event.
-        else
-            if type(prevEventRef)=="string" then
-                prevEventRef=eventStr2Num[prevEventRef] --extract the actual reference from the user-friendly string they provided.
-            end
-            userFuncList=rootFuncList[prevEventRef]     --recover the func list from the previous reference
-            rootFuncList[thisEvent]=userFuncList        --link the func list to this new reference, so that it works correctly in any subsequent linked events.
-        end
-    end
-    registerEvent=function(userFunc, priority, disablePausing, manualControl)
-        local nextEvent, isPaused, removeUserHook, removeOrPauseFunc, userFuncBaseCaller, userFuncHandler, pauseFuncHandler
-        if prevEventRef then
-            --all data is indexed by the user's function. So, for linked events, the user should pass the
-            --same function to each of them, to ensure that they can be connected via one harmonious coroutine:
-            local thisList=userFuncList[userFunc]
-            
+        if isLinkable then
             local resumer=function(co, ...)
-                globalList = thisList
+                globalFuncRef = funcRef
                 coroutine.resume(co, ...)
                 if not manualControl and coroutine.status(co)=="suspended" then
                     nextEvent(...)
                     return true
                 end
             end
-            if not thisList then
-                thisList=setmetatable({}, weakTable)
-                userFuncList[userFunc]=thisList
-
+            if funcRef then
+                wrapper=function(eventIndex, ...)
+                    --completely change the user's function to load and resume a coroutine.
+                    local thread=funcRef[eventIndex]
+                    if thread and thread.waitFor==thisEvent then
+                        return resumer(thread.co, eventIndex, ...)
+                    end
+                end
+            else
                 --It is imperitive that the eventIndex is a unique value for the event, in order to ensure that
                 --coroutines can persist even with overlapping events that call the same function. A good example
                 --is a Unit Index Event which runs when a unit is created, and once more when it is removed. The
                 --Event Index can be a unit, and the "on index" coroutine can simply yield until the "on deindex"
                 --runs for that exact unit. Another example is simply using a dynamic table for the eventIndex,
                 --which is what systems like Damage Engine use.
-                userFuncBaseCaller=function(eventIndex, ...)
+                wrapper=function(eventIndex, ...)
                     --transform calling the user's function into a coroutine
                     return resumer(coroutine.create(userFunc), eventIndex, ...)
                 end
-            else
-                thisList=userFuncList[userFunc]
-                userFuncBaseCaller=function(eventIndex, ...)
-                    --completely change the user's function to load and resume a coroutine.
-                    local thread=thisList[eventIndex]
-                    if thread and thread.waitFor==thisEvent then
-                        return resumer(thread.co, eventIndex, ...)
+                firstReg=true
+            end
+        else
+            wrapper=userFunc
+            if maxEventDepth > 0 then
+                evaluator = function() globalFuncRef = funcRef end
+            end
+        end
+        if not funcRef then
+            funcRef=setmetatable({userFunc=userFunc, maxDepth=maxEventDepth}, weakTable)
+            userFuncList[userFunc]=funcRef
+        end
+        local isPaused
+        if not disablePausing then
+            local old = evaluator or DoNothing
+            evaluator = function() return isPaused or old() end
+        end
+        evaluator = evaluator or DoNothing
+        if manualControl then
+            local old = wrapper
+            wrapper = function(...)
+                if not evaluator() then
+                    old(...)
+                end
+            end
+        else
+            local old = wrapper
+            wrapper=function(...)
+                if not evaluator() then
+                    if not old(...) or not isLinkable then
+                        nextEvent(...)
                     end
                 end
             end
-        else
-            userFuncBaseCaller=userFunc
         end
-        if disablePausing then
-            pauseFuncHandler,userFuncBaseCaller=userFuncBaseCaller,nil
-        else
-            --wrap the user's function:
-            pauseFuncHandler=function(...)
-                if not isPaused then return userFuncBaseCaller(...) end
-            end
-        end
-        if manualControl then
-            userFuncHandler,pauseFuncHandler=pauseFuncHandler,nil
-        else
-            --wrap the user's function again:
-            userFuncHandler=function(...)
-                if not pauseFuncHandler(...) or not prevEventRef then
-                    nextEvent(...)
+        ---Call this function from the custom register to actually register the event.
+        ---This also allows you access to the return values, because your custom register
+        ---needs to return those two functions (wrapped, nilled or unspoiled).
+        ---@param editedFunc? function
+        ---@return fun(args_should_match_the_original_function?: any):any nextEvent
+        ---@return fun(pause:boolean, autoUnpause:boolean) removeOrPause
+        local continue=function(editedFunc)
+            local removeUserHook
+            nextEvent,removeUserHook=AddHook(thisEvent, editedFunc, priority, events)  --Hook the processed function to the event.
+            removeEventHook=removeUserHook --Really only needs to be done once.
+            
+            local enablerFunc
+            enablerFunc=function(pause, autoUnpause)
+                if pause==nil then
+                    removeUserHook()
+                    if firstReg and isLinkable then
+                        userFuncList[userFunc]=nil --should the function ever be re-registered, this is key.
+                    end
+                else
+                    isPaused=pause
+                    if autoUnpause then
+                        --this is the same as the pause/unpause mechanism of Damage Engine 5.
+                        unpauseList=unpauseList or {}
+                        table.insert(unpauseList, enablerFunc)
+                    end
                 end
             end
+            funcRef.enabler=enablerFunc
+            return nextEvent, enablerFunc --return the user's 2 control functions.
         end
-        if funcSanitizer then
-            --in case the user wants anything fancier than what's already given, they can add
-            --some kind of conditional or data attachment/complete denial of the function.
-            userFuncHandler=funcSanitizer(userFuncHandler)
-            if userFuncHandler==nil then return end
-        end
-        --Now that the user's function has been processed, hook it to the event:
-        nextEvent,removeUserHook=AddHook(thisEvent, userFuncHandler, priority, events)
-        
-        removeEventHook=removeEventHook or removeUserHook   --useful only if the entire event will ultimately be removed.
-
-        --this incorporates the pause/unpause mechanism of Damage Engine 5, but with more emphasis on the user being in control:
-        removeOrPauseFunc=function(pause, autoUnpause)
-            if pause==nil then
-                removeUserHook()
-            else
-                isPaused=pause
-                if autoUnpause then
-                    unpauseList=unpauseList or {}
-                    table.insert(unpauseList, removeOrPauseFunc)
-                end
+        if customRegister then
+            local a,b,clearRef=customRegister(wrapper, continue, firstReg, trigRef, opCode, priority)
+            if clearRef then
+                userFuncList[userFunc]=nil
             end
+            return a,b
+        else
+            return continue(wrapper)
         end
-        return nextEvent, removeOrPauseFunc --return the user's 2 control functions.
     end
+    local removeTRVE
     if eventStr then
-        if prevEventRef then
-            eventStr2Num[eventStr]=thisEvent    --Cache the event index to the string representation
-
-            globals[eventStr]=thisEvent         --Align the "global.X" syntax accordingly, so that it works properly with Set WaitForEvent = SomeEvent.
-
+        if isLinkable then
+            --Align the "global.X" syntax accordingly, so that it works properly with Set WaitForEvent = SomeEvent.
+            pcall(function() globals[eventStr]=thisEvent end) --Have to pcall this, as there is no safe "getter" function to check if the real is indexed to the global to begin with.
+            
             if not globalRemapCalled then
                 globalRemapCalled=true
                 GlobalRemap("udg_WaitForEvent", nil, WaitForEvent)
                 GlobalRemap("udg_EventIndex", function() return globalEventIndex end)
+                GlobalRemap("udg_EventRecusion", nil, function(maxDepth)
+                    if globalFuncRef then
+                        globalFuncRef.maxDepth=maxDepth
+                    end
+                end)
             end
         end
         local oldTRVE
@@ -159,58 +195,73 @@ function CreateEvent(eventStr, prevEventRef, maxEventDepth, funcSanitizer)
                     end
                     cachedTrigFuncs[userTrig]=cachedTrigFunc
                 end
+                trigRef,opCode=userTrig,userOp
                 registerEvent(cachedTrigFunc, userVal)
+                trigRef,opCode=nil,nil
             else
                 return oldTRVE(userTrig, userStr, userOp, userVal)
             end
         end)
     end
+    local running
     return registerEvent,
-    --This function runs the event.
-    function(eventIndex, ...)
+    --Second return value is a function that runs the event when called. Any number of paramters can be specified, but the first should be unique to the event instance you're running.
+    function(eventIndex, specialExec, ...)
         if running then
             --rather than going truly recursive, queue the event to be ran after the first event, and wrap up any events queued before this.
-            if running==true then running={} end
-            table.insert(running, table.pack(eventIndex, ...))
+            local max = globalFuncRef.maxDepth or maxEventDepth
+            if max>0 then
+                if running==true then running={} end
+                table.insert(running, table.pack(eventIndex, ...))
+                local depth = (globalFuncRef.depth or 0) + 1
+                globalFuncRef.depth = depth
+                if depth >= max then
+                    --max recursion has been reached for this function. Pause it and let it be automatically unpaused at the end of the sequence.
+                    globalFuncRef.enabler(true, true)
+                end
+            end
         else
-            local oldIndex,oldList=globalEventIndex,globalList--cache so that different overlapping events don't have a conflict.
+            local oldIndex,oldList=globalEventIndex,globalFuncRef--cache so that different overlapping events don't have a conflict.
             globalEventIndex=eventIndex
             running=true
             events[thisEvent](eventIndex, ...)
-            local depth=0
-            while running~=true and depth<maxEventDepth do
-                --This is, at its core, the same recursion processing introduced in Damage Engine 5.
+            if specialExec and type(specialExec)=="function" then
+                --A special execution was necessary to enable SpellEvent's O(1) function execution based on ability ID.
+                --Without it, all events would need to run, regardless of if the conditions matches.
+                specialExec(eventIndex, ...)
+            end
+            while running~=true do
+                --This is the same recursion processing introduced in Damage Engine 5.
                 local runner=running; running=true
                 for _,args in ipairs(runner) do
                     globalEventIndex=args[1]
                     events[thisEvent](table.unpack(args, 1, args.n))
                 end
-                depth=depth+1
             end
             if unpauseList then
                 --unpause users' functions that were set to be automatically unpaused.
                 for func in ipairs(unpauseList) do func(false) end
                 unpauseList=nil
             end
-            --un-comment the below if you want debugging. Mainly useful if you use a depth greater than 1.
-            --if depth>=maxEventDepth then
-            --    print("Infinite Recursion detected on event: "..(eventStr or thisEvent))
-            --end
             running=nil
-            globalEventIndex,globalList=oldIndex,oldList--retrieve so that overlapping events don't break.
+            globalEventIndex,globalFuncRef=oldIndex,oldList--retrieve so that overlapping events don't break.
         end
     end,
-    --This function destroys the event.
+    --Third return value is used to remove the event. Usually unused, as most events would be persistent.
     function()
-        if thisEvent then
-            if removeEventHook and events[thisEvent]~=DoNothing then removeEventHook(true) end
-            if removeTRVE then removeTRVE() end
-
+        if thisEvent~=0 then
+            if removeEventHook and events[thisEvent]~=DoNothing then
+                removeEventHook(true)
+            end
+            if removeTRVE then
+                removeTRVE()
+            end
             recycleEventIndex(thisEvent)
-            thisEvent=nil
+            events[thisEvent] = nil
+            thisEvent         = 0
         end
     end,
-    thisEvent --the event index. Useful for chaining events in a sequence that didn't get tagged to a GUI variable.
+    thisEvent --lastly, return the event ID for Lua users who want to be able to wait for events.
 end
 do
     local eventN=0
@@ -230,10 +281,24 @@ do
         table.insert(eventR, index)
         events[index]=nil
     end
-    ---@param suspendUntil integer
-    function WaitForEvent(suspendUntil)
-        globalList[globalEventIndex]={co=coroutine.running(), waitFor=suspendUntil}
+    ---@param whichEvent integer
+    function WaitForEvent(whichEvent)
+        globalFuncRef[globalEventIndex]={co=coroutine.running(), waitFor=whichEvent}
         coroutine.yield()
+    end
+    ---Raises or lowers the recursion tolerance for the running function.
+    ---The return values are intended for debugging. I expect the automatic recursion handling to be sufficient for most cases.
+    ---@param maxDepth? integer
+    ---@return integer currentDepth
+    ---@return integer maximumDepth
+    function ControlEventRecursion(maxDepth)
+        if globalFuncRef then
+            if maxDepth then
+                globalFuncRef.maxDepth = maxDepth
+            end
+            return globalFuncRef.depth or 0, globalFuncRef.maxDepth or 0
+        end
+        return 0, 0
     end
 end
 end)
