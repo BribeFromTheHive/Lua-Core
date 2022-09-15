@@ -36,12 +36,15 @@ function()
         abilcode    udg_Spell__Ability
         boolean     udg_Spell__Completed
         boolean     udg_Spell__Channeling
+        real        udg_Spell__Duration
 
     Thanks to Lua, the above variables are read-only, as intended.
 
     New to Lua:
-        real            udg_Spell__wait         -> Use this instead of a regular wait to preserve event data after the wait.
-        integer         udg_Spell__loop         -> The loop will continue up until the point where the caster stops channeling the spell.
+        real            udg_Spell__wait         -> Replaces Spell__Time. Use this instead of a regular wait to preserve event data after the wait.
+        integer         udg_Spell__whileChannel -> The loop will continue up until the point where the caster stops channeling the spell.
+        integer         udg_Spell__forDuration  -> Set Spell__Duration before entering the loop, then the loop will continue for the duration.
+        string          udg_Spell__abilcode     -> Useful for debugging purposes.
 
         All of the other variables will be deprecated; possibly at some future point split into separate systems.
     --]=========================================================================================]
@@ -84,18 +87,29 @@ function()
             return targetPoint
         end)
     end
+    local durationTracker = {__mode="k"}
+    setmetatable(durationTracker, durationTracker)
     GlobalRemap("udg_Spell__wait", nil, function(duration)
         local spell = eventSpell
         PolledWait(duration)
         eventSpell = spell --it's really this simple, thanks to PreciseWait and Global variable Remapper.
+        local co = coroutine.running()
+        if durationTracker[co] and durationTracker[co] > 0 then
+            durationTracker[co] = durationTracker[co] - duration
+        end
     end)
-    GlobalRemap("udg_Spell__loop", function() return eventSpell.Channeling and -1 or 1 end)
+    GlobalRemap("udg_Spell__Duration", function() return durationTracker[coroutine.running()] end, function(val) durationTracker[coroutine.running()] = val end)
+    GlobalRemap("udg_Spell__forDuration", function()
+        local co = coroutine.running()
+        return durationTracker[co] and durationTracker[co] > 0 and -1 or 1
+    end)
+    GlobalRemap("udg_Spell__whileChannel", function() return eventSpell.Channeling and -1 or 1 end)
     GlobalRemap("udg_Spell__abilcode", function()
-        if not eventSpell then return"undefined"end
+        if not eventSpell then return"nil"end
         local value = eventSpell.Ability
         local result = ""
-        for byteno=1,4 do
-            result = string.char(value % 256) .. result
+        for _=1,4 do
+            result = string.char(value %% 256) .. result --crazy that World Editor needs double percentage symbols
             value = value // 256
         end
         return result
@@ -192,9 +206,7 @@ function()
                     cachedAbil=nil
                 end
             end
-            if not exit then
-                return continue(func)
-            end
+            return continue(func, exit)
         end)
         SpellEvent["on"..name] = function(abil, ...)
             cachedAbil=abil
@@ -202,6 +214,7 @@ function()
             cachedAbil=nil
         end
         eventList["on"..name] = function(spell)
+            --print("running "..name)
             run(spell, abils[spell.Ability])
         end
     end
