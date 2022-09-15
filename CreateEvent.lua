@@ -32,14 +32,14 @@ complex environment, depending on how you choose to use it. It is also easily
 extensible, so it can be used to support API for other event libraries.
 ]]
 local events={}
-local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef
+local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef, runEvent
 local weakTable={__mode="k"}
 local userFuncList=setmetatable({}, weakTable)
 
 ---@param eventStr?         string      - Reserved only for GUI trigger registration
 ---@param isLinkable?       boolean     - If true, will use event linking to bind events when possible.
 ---@param maxEventDepth?    integer     - Defaults to 1. If 0, events are forbidden to branch off of each other.
----@param customRegister?   fun(userFunc:function, continue:function, firstReg?:boolean, trigRef?:trigger, opCode?:limitop, priority?:number):function,function
+---@param customRegister?   fun(userFunc:function, continue?:fun(editedFunc:fun(), noHook:boolean), firstReg?:boolean, trigRef?:trigger, opCode?:limitop, priority?:number):function,function
 ---@return fun(userFunc:function, priority?:number, manualControl?:boolean):nextEvent:function, removeOrPause:fun(pause:boolean) registerEvent
 ---@return fun(...)         runEvent    - Run all functions registered to this event. The first parameter should be a unique index, and if the second parameter is a function, it will be executed as a "one time event", without being registered.
 ---@return function         removeEvent - Call this to remove the event completely.
@@ -114,7 +114,7 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             local old = wrapper
             wrapper=function(...)
                 if not evaluator() then
-                    if not old(...) or not isLinkable then
+                    if (not old(...) or not isLinkable) then
                         nextEvent(...)
                     end
                 end
@@ -124,13 +124,17 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
         ---This also allows you access to the return values, because your custom register
         ---needs to return those two functions (wrapped, nilled or unspoiled).
         ---@param editedFunc? function
+        ---@param noHook? boolean
         ---@return fun(args_should_match_the_original_function?: any):any nextEvent
         ---@return fun(pause:boolean, autoUnpause:boolean) removeOrPause
-        local continue=function(editedFunc)
+        local continue=function(editedFunc, noHook)
             local removeUserHook
-            nextEvent,removeUserHook=AddHook(thisEvent, editedFunc, priority, events)  --Hook the processed function to the event.
-            removeEventHook=removeUserHook --Really only needs to be done once.
-            
+            if noHook then
+                nextEvent,removeUserHook=DoNothing,DoNothing
+            else
+                nextEvent,removeUserHook=AddHook(thisEvent, editedFunc, priority, events)  --Hook the processed function to the event.
+                removeEventHook=removeUserHook --Really only needs to be done once.
+            end
             local enablerFunc
             enablerFunc=function(pause, autoUnpause)
                 if pause==nil then
@@ -212,30 +216,25 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             local max = globalFuncRef.maxDepth or maxEventDepth
             if max>0 then
                 if running==true then running={} end
-                table.insert(running, table.pack(eventIndex, ...))
+                table.insert(running, table.pack(eventIndex, specialExec, ...))
                 local depth = (globalFuncRef.depth or 0) + 1
-                globalFuncRef.depth = depth
                 if depth >= max then
                     --max recursion has been reached for this function. Pause it and let it be automatically unpaused at the end of the sequence.
+                    globalFuncRef.depth = 0
                     globalFuncRef.enabler(true, true)
+                else
+                    globalFuncRef.depth = depth
                 end
             end
         else
             local oldIndex,oldList=globalEventIndex,globalFuncRef--cache so that different overlapping events don't have a conflict.
-            globalEventIndex=eventIndex
             running=true
-            events[thisEvent](eventIndex, ...)
-            if specialExec and type(specialExec)=="function" then
-                --A special execution was necessary to enable SpellEvent's O(1) function execution based on ability ID.
-                --Without it, all events would need to run, regardless of if the conditions matches.
-                specialExec(eventIndex, ...)
-            end
+            runEvent(events[thisEvent], eventIndex, specialExec, ...)
             while running~=true do
                 --This is the same recursion processing introduced in Damage Engine 5.
                 local runner=running; running=true
                 for _,args in ipairs(runner) do
-                    globalEventIndex=args[1]
-                    events[thisEvent](table.unpack(args, 1, args.n))
+                    runEvent(events[thisEvent], table.unpack(args, 1, args.n))
                 end
             end
             if unpauseList then
@@ -280,6 +279,15 @@ do
     recycleEventIndex=function(index)
         table.insert(eventR, index)
         events[index]=nil
+    end
+    runEvent = function(eventFunc, eventIndex, specialFunc, ...)
+        globalEventIndex=eventIndex
+        eventFunc(eventIndex, ...)
+        if specialFunc and type(specialFunc)=="function" then
+            --A special execution was necessary to enable SpellEvent's O(1) function execution based on ability ID.
+            --Without it, all events would need to run, regardless of if the conditions matches.
+            specialFunc(eventIndex, ...)
+        end
     end
     ---@param whichEvent integer
     function WaitForEvent(whichEvent)
