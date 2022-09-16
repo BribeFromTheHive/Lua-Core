@@ -1,5 +1,15 @@
 --The GUI Enhancer Collection: a HiveWorkshop community effort to improve the Trigger Editor experience.
---Updated: 03 Sep 2022
+--Updated: 16 Sep 2022
+
+--Blizzard forgot to add this, but still enabled it for GUI.
+function BlzFourCC2S(value)
+    local result = ""
+    for _=1,4 do
+        result = string.char(value %% 256) .. result --crazy that World Editor needs double percentage symbols
+        value = value // 256
+    end
+    return result
+end
 
 function TriggerRegisterDestDeathInRegionEvent(trig, r)
     --Removes the limit on the number of destructables that can be registered.
@@ -157,9 +167,7 @@ end
 ---@param whichStat integer
 ---@param value integer
 function SetHeroStat(whichHero, whichStat, value)
-    local func=whichStat==bj_HEROSTAT_STR and SetHeroStr or
-               whichStat==bj_HEROSTAT_AGI and SetHeroAgi or SetHeroInt
-	func(whichHero, value, true)
+	(whichStat==bj_HEROSTAT_STR and SetHeroStr or whichStat==bj_HEROSTAT_AGI and SetHeroAgi or SetHeroInt)(whichHero, value, true)
 end
 CommentString=nil --delete this. World Editor hasn't used it in decades.
 
