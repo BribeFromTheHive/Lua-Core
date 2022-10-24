@@ -1,8 +1,9 @@
-do--[[
+OnGlobalInit("GlobalRemap", function()
+
+    Require "AddHook" --https://www.hiveworkshop.com/threads/hook.339153
+--[[
 --------------------------------------------------------------------------------------
-Global Variable Remapper v1.2.0.1 by Bribe
---Requires Hook: https://www.hiveworkshop.com/threads/hook.339153
---Libraries which call this should use Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
+Global Variable Remapper v1.3 by Bribe
 
 - Intended to empower the GUI user-base and those who design systems for them.
 
@@ -23,13 +24,12 @@ API:
     @setterFunc is a function that takes two arguments: the index of the array and the
         value the user is trying to assign. The function doesn't return anything.
 ----------------------------------------------------------------------------------------]]
-
 local getters, setters, skip
 
 ---Remap a non-array global variable
 ---@param var string
----@param getFunc? fun() ->value?
----@param setFunc? fun(value)
+---@param getFunc? fun():any
+---@param setFunc? fun(value:any)
 function GlobalRemap(var, getFunc, setFunc)
     if not skip then
         getters, setters, skip = {}, {}, DoNothing
@@ -40,6 +40,7 @@ function GlobalRemap(var, getFunc, setFunc)
             if func then
                 return func()
             else
+                print("Trying to read undeclared global: "..tostring(index))
                 return oldGet(tab, index)
             end
         end, nil, _G,
@@ -73,7 +74,17 @@ function GlobalRemapArray(var, getFunc, setFunc) --will get inserted into Global
     _G[var] = tab
     getFunc = getFunc or DoNothing
     setFunc = setFunc or DoNothing
-    setmetatable(tab, {__index = function(_, index) return getFunc(index) end, __newindex = function(_, index, val) setFunc(index, val) end})
+    setmetatable(tab, {
+        __index = function(_, index)
+            return getFunc(index)
+        end,
+        __newindex = function(_, index, val)
+            --if index==nil then
+            --    print("Attempt to index a nil value: "..GetStackTrace())
+            --    return
+            --end
+            setFunc(index, val)
+        end
+    })
 end
-end
---End of Global Variable Remapper
+end)
