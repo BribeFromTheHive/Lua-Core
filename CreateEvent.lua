@@ -1,9 +1,10 @@
-OnLibraryInit({         --requires https://www.hiveworkshop.com/threads/global-initialization.317099/
-    "AddHook"           --requires https://www.hiveworkshop.com/threads/hook.339153/
-    --,"GlobalRemap"    --optional https://www.hiveworkshop.com/threads/global-variable-remapper.339308
-}, function()
+OnGlobalInit(function()
+
+Require "AddHook"                            --https://www.hiveworkshop.com/threads/hook.339153/
+local remap = Require.optional "GlobalRemap" --https://www.hiveworkshop.com/threads/global-variable-remapper.339308
+
 --[[
-CreateEvent v1.2
+CreateEvent v1.3
 
 CreateEvent is built for GUI support, event linking via coroutines, simple events
 (e.g. Heal Event), binary events (like Unit Indexer) or complex event systems such as
@@ -13,23 +14,32 @@ There are three main functions to keep in mind for the global API:
 
 CreateEvent
 -----------
-The absolute core, and is really just far too complicated to be able to outline what it
-does in this description box. Reading through the code in the comments below, or looking
-at the example code, will help to try to get your head around what's going on.
+Create an event that is recursion-proof by default, with easy syntax for GUI support.
+
+Due to optional parameters and return values, the API supports a very simple or very
+complex environment - depending on how you choose to use it.
+It is also easily extensible, so it can be used to support API for other event libraries.
+
+In its most basic form:
+=======================
+local registerEvent, runMyEvent = CreateEvent()     -> Create your event.
+RegisterMyEvent = registerEvent                     -> Global API for the user to call to register their callback function.
+runMyEvent()                        -> call this from your system when it's time for the event to execute.
+
+A slight modification to the above to support GUI:
+==================================================
+local registerEvent, runMyEvent = CreateEvent("udg_MyEventForGUI")
+...From a trigger:...
+Game - Value of MyEventForGUI becomes Equal to 0.00
 
 WaitForEvent
-------------
-Useful only when linking events together, and is used to suspend your running function
-until the chosen event is called.
+============
+Useful for when events are linked together. Allows you to suspend your function until the designated event is called.
 
 ControlEventRecursion
----------------------
+=====================
 Useful only if wanting recursion for a specific function to be able to exceed a certain
 point, but also useful for debugging (as it returns the current depth and max depth).
-
-Due to optional parameters/return values, the API supports a very simple or very
-complex environment, depending on how you choose to use it. It is also easily
-extensible, so it can be used to support API for other event libraries.
 ]]
 local events={}
 local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef, runEvent
@@ -170,11 +180,11 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             --Align the "global.X" syntax accordingly, so that it works properly with Set WaitForEvent = SomeEvent.
             pcall(function() globals[eventStr]=thisEvent end) --Have to pcall this, as there is no safe "getter" function to check if the real is indexed to the global to begin with.
             
-            if not globalRemapCalled then
+            if remap and not globalRemapCalled then
                 globalRemapCalled=true
-                GlobalRemap("udg_WaitForEvent", nil, WaitForEvent)
-                GlobalRemap("udg_EventIndex", function() return globalEventIndex end)
-                GlobalRemap("udg_EventRecusion", nil, function(maxDepth)
+                remap("udg_WaitForEvent", nil, WaitForEvent)
+                remap("udg_EventIndex", function() return globalEventIndex end)
+                remap("udg_EventRecusion", nil, function(maxDepth)
                     if globalFuncRef then
                         globalFuncRef.maxDepth=maxDepth
                     end
