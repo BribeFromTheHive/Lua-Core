@@ -1,12 +1,11 @@
---Lua Spell Event v1.0
-OnLibraryInit({
-    "Timed",                        --https://www.hiveworkshop.com/threads/timed-call-and-echo.339222/
-    "GlobalRemap",                  --https://www.hiveworkshop.com/threads/global-variable-remapper.339308
-    "RegisterAnyPlayerUnitEvent",   --https://www.hiveworkshop.com/threads/collection-gui-repair-kit.317084/
-    "CreateEvent"                   --https://www.hiveworkshop.com/threads/event-gui-friendly.339451/
-    --PreciseWait*                  --https://www.hiveworkshop.com/threads/precise-wait-gui-friendly.316960/
-},
-function()
+--Lua Spell Event v1.1
+OnGlobalInit(function()
+    Require "GlobalRemap"                   --https://www.hiveworkshop.com/threads/global-variable-remapper.339308
+    Require "RegisterAnyPlayerUnitEvent"    --https://www.hiveworkshop.com/threads/collection-gui-repair-kit.317084/
+    Require "CreateEvent"                   --https://www.hiveworkshop.com/threads/event-gui-friendly.339451/
+    Require "Action"                        --https://www.hiveworkshop.com/threads/action-the-future-of-gui-actions.341866/
+    Require "PreciseWait"                   --https://www.hiveworkshop.com/threads/precise-wait-gui-friendly.316960/
+
     SpellEvent={}
 
     local _AUTO_ORDER = "spellsteal" --If TriggerRegisterCommandEvent is called and this order is specified,
@@ -37,20 +36,20 @@ function()
         boolean     udg_Spell__Completed
         boolean     udg_Spell__Channeling
         real        udg_Spell__Duration
+        real        udg_Spell__Time
 
     Thanks to Lua, the above variables are read-only, as intended.
 
     New to Lua:
         real            udg_Spell__wait         -> Replaces Spell__Time. Use this instead of a regular wait to preserve event data after the wait.
         integer         udg_Spell__whileChannel -> The loop will continue up until the point where the caster stops channeling the spell.
-        integer         udg_Spell__forDuration  -> Set Spell__Duration before entering the loop, then the loop will continue for the duration.
         string          udg_Spell__abilcode     -> Useful for debugging purposes.
 
         All of the other variables will be deprecated; possibly at some future point split into separate systems.
     --]=========================================================================================]
     
     local eventSpells,trigAbilMap = {},{}
-    local oldCommand
+    local oldCommand, remove
     SpellEvent.__index = function(_,unit) return eventSpells[unit] end
     
     local eventSpell
@@ -69,50 +68,40 @@ function()
         local getLevel = function() return eventSpell.Level end
         SpellEvent.addProperty("Level", getLevel)
         SpellEvent.addProperty("LevelMultiplier", getLevel)
-    end do
-        local getUnitPoint = function(unit, point)
-            MoveLocation(point, GetUnitX(unit), GetUnitY(unit))
-            return point
-        end
-        local casterPoint = Location(0,0)
+    end
+    do
+        local castPt, targPt = {},{}
         SpellEvent.addProperty("CastPoint", function()
-            return getUnitPoint(eventSpell.Caster, casterPoint)
+            castPt[1]=GetUnitX(eventSpell.Caster)
+            castPt[2]=GetUnitY(eventSpell.Caster)
+            return castPt
         end)
-        local targetPoint = Location(0,0)
         SpellEvent.addProperty("TargetPoint", function()
             if eventSpell.Target then
-                return getUnitPoint(eventSpell.Target, targetPoint)
+                targPt[1]=GetUnitX(eventSpell.Target)
+                targPt[2]=GetUnitY(eventSpell.Target)
+            else
+                targPt[1]=eventSpell.x
+                targPt[2]=eventSpell.y
             end
-            MoveLocation(targetPoint, eventSpell.x, eventSpell.y)
-            return targetPoint
+            return targPt
         end)
     end
-    local durationTracker = {__mode="k"}
-    setmetatable(durationTracker, durationTracker)
     GlobalRemap("udg_Spell__wait", nil, function(duration)
         local spell = eventSpell
-        PolledWait(duration)
-        eventSpell = spell --it's really this simple, thanks to PreciseWait and Global variable Remapper.
-        local co = coroutine.running()
-        if durationTracker[co] and durationTracker[co] > 0 then
-            durationTracker[co] = durationTracker[co] - duration
+        Action.wait(duration)
+        eventSpell = spell --it's really this simple! No more crazy data rerieval with loads of GUI variables to reset.
+    end)
+    Action.create("udg_Spell__whileChannel", function(func)
+        while eventSpell.Channeling do
+            func()
         end
     end)
-    GlobalRemap("udg_Spell__Duration", function() return durationTracker[coroutine.running()] end, function(val) durationTracker[coroutine.running()] = val end)
-    GlobalRemap("udg_Spell__forDuration", function()
-        local co = coroutine.running()
-        return durationTracker[co] and durationTracker[co] > 0 and -1 or 1
-    end)
-    GlobalRemap("udg_Spell__whileChannel", function() return eventSpell.Channeling and -1 or 1 end)
     GlobalRemap("udg_Spell__abilcode", function()
-        if not eventSpell then return"nil"end
-        local value = eventSpell.Ability
-        local result = ""
-        for _=1,4 do
-            result = string.char(value %% 256) .. result --crazy that World Editor needs double percentage symbols
-            value = value // 256
+        if eventSpell then
+            return BlzFourCC2S(eventSpell.Ability)
         end
-        return result
+        return "nil"
     end)
 
     local eventList         = {}
