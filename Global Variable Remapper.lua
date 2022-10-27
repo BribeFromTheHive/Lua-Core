@@ -3,7 +3,7 @@ OnGlobalInit("GlobalRemap", function()
     Require "AddHook" --https://www.hiveworkshop.com/threads/hook.339153
 --[[
 --------------------------------------------------------------------------------------
-Global Variable Remapper v1.3 by Bribe
+Global Variable Remapper v1.3.1 by Bribe
 
 - Intended to empower the GUI user-base and those who design systems for them.
 
@@ -24,56 +24,45 @@ API:
     @setterFunc is a function that takes two arguments: the index of the array and the
         value the user is trying to assign. The function doesn't return anything.
 ----------------------------------------------------------------------------------------]]
-local getters, setters, skip
+local default = DoNothing
+local getters,setters = {},{}
+local oldGet, oldSet
+oldGet = AddHook("__index", function(tab, index)
+    if getters[index]~=nil then
+        return getters[index]()
+    else
+        --print("Trying to read undeclared global: "..tostring(index))
+        return oldGet(tab, index)
+    end
+end, 0, _G, default)
+
+oldSet = AddHook("__newindex", function(tab, index, val)
+    if setters[index]~=nil then
+        setters[index](val)
+    else
+        oldSet(tab, index, val)
+    end
+end, 0, _G, rawset)
 
 ---Remap a non-array global variable
 ---@param var string
 ---@param getFunc? fun():any
 ---@param setFunc? fun(value:any)
 function GlobalRemap(var, getFunc, setFunc)
-    if not skip then
-        getters, setters, skip = {}, {}, DoNothing
-        local oldGet, oldSet
-        oldGet = AddHook("__index",
-        function(tab, index)
-            local func = getters[index]
-            if func then
-                return func()
-            else
-                print("Trying to read undeclared global: "..tostring(index))
-                return oldGet(tab, index)
-            end
-        end, nil, _G,
-        function(a, b)
-            return rawget(a, b)
-        end, true)
-        oldSet = AddHook("__newindex", 
-        function(tab, index, val)
-            local func = setters[index]
-            if func then
-                func(val)
-            else
-                oldSet(tab, index, val)
-            end
-        end, nil, _G,
-        function(a, b, c)
-            rawset(a, b, c)
-        end, true)
-    end
-    _G[var] = nil                   --Delete the variable from the global table.
-    getters[var] = getFunc or skip  --Assign a function that returns what should be returned when this variable is referenced.
-    setters[var] = setFunc or skip  --Assign a function that captures the value the variable is attempting to be set to.
+    _G[var] = nil                       --Delete the variable from the global table.
+    getters[var] = getFunc or default   --Assign a function that returns what should be returned when this variable is referenced.
+    setters[var] = setFunc or default   --Assign a function that captures the value the variable is attempting to be set to.
 end
 
 ---Remap a global variable array
 ---@param var string
----@param getFunc? fun(index : any) -> any
+---@param getFunc? fun(index : any): any
 ---@param setFunc? fun(index : any, val : any)
 function GlobalRemapArray(var, getFunc, setFunc) --will get inserted into GlobalRemap after testing.
     local tab = {}
     _G[var] = tab
-    getFunc = getFunc or DoNothing
-    setFunc = setFunc or DoNothing
+    getFunc = getFunc or default
+    setFunc = setFunc or default
     setmetatable(tab, {
         __index = function(_, index)
             return getFunc(index)
