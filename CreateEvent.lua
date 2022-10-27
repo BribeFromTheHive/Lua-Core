@@ -42,12 +42,12 @@ Useful only if wanting recursion for a specific function to be able to exceed a 
 point, but also useful for debugging (as it returns the current depth and max depth).
 ]]
 
-local eventStrs = {}
 local Event = {}
+local eventStrs = {} --key, values formatted as ["eventName"] = eventID.
 eventStrs.__index = function(_, string) return rawget(Event, rawget(eventStrs, string)) end
 setmetatable(Event, eventStrs)
 
-local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef, runEvent
+local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef, runEvent, waitForEvent
 local weakTable={__mode="k"}
 local userFuncList=setmetatable({}, weakTable)
 
@@ -58,8 +58,7 @@ local userFuncList=setmetatable({}, weakTable)
 ---@return fun(userFunc:function, priority?:number, manualControl?:boolean):nextEvent:function, removeOrPause:fun(pause:boolean) registerEvent
 ---@return fun(...)         runEvent    - Run all functions registered to this event. The first parameter should be a unique index, and if the second parameter is a function, it will be executed as a "one time event", without being registered.
 ---@return function         removeEvent - Call this to remove the event completely.
----@return integer          eventIndex  - If Lua users want to use "WaitForEvent", they need this value in order to know what to wait for.
-function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
+function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
     local thisEvent   = createEventIndex()  -- each event needs a unique numerical index.
     Event[thisEvent]  = DoNothing           -- use a dummy function to enable Hook without having to use it as a default function.
     maxEventDepth     = maxEventDepth or 1  -- apply the default recusion depth allowance for when none is specified.
@@ -195,7 +194,7 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
                 if remap and not globalRemapCalled then
                     globalRemapCalled=true
                     if sleep then
-                        remap("udg_WaitForEvent", nil, WaitForEvent)
+                        remap("udg_WaitForEvent", nil, waitForEvent)
                         remap("udg_SleepEvent", nil, SleepEvent)
                     end
                     remap("udg_EventIndex", function() return globalEventIndex end)
@@ -286,10 +285,9 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             recycleEventIndex(thisEvent)
             thisEvent        = 0
         end
-    end,
-    thisEvent --lastly, return the event ID for Lua users who want to be able to wait for events.
+    end
 end
-Event.create = CreateEvent --yes, this syntax works, too. I may eventually deprecate the CreateEvent function in favor of this.
+CreateEvent = Event.create -- I may eventually deprecate this function function.
 do
     local uniqueEventIndices=0
     local recycledEvents={}
@@ -317,10 +315,14 @@ do
             specialFunc(eventIndex, ...)
         end
     end
-    ---@param whichEvent integer
-    function WaitForEvent(whichEvent)
+    ---@param whichEvent real
+    waitForEvent = function(whichEvent)
         globalFuncRef[globalEventIndex]={co=coroutine.running(), waitFor=whichEvent}
         coroutine.yield()
+    end
+    ---@param whichEvent string
+    function WaitForEvent(whichEvent)
+        waitForEvent(eventStrs[whichEvent])
     end
     if sleep then
         ---Yields the coroutine while preserving the event index for the user.
