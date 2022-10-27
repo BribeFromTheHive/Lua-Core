@@ -2,35 +2,35 @@ OnGlobalInit(function()
 
 Require "AddHook"                            --https://www.hiveworkshop.com/threads/hook.339153/
 local remap = Require.optional "GlobalRemap" --https://www.hiveworkshop.com/threads/global-variable-remapper.339308
+local sleep = Require.optional "PreciseWait"
+
+local _EVENT_PRIORITY = 1000 --The hook priority assigned to the event executor.
 
 --[[
-CreateEvent v1.3
+Event v1.4
 
-CreateEvent is built for GUI support, event linking via coroutines, simple events
-(e.g. Heal Event), binary events (like Unit Indexer) or complex event systems such as
-Spell Event, Damage Engine and Unit Event.
+Event is built for GUI support, event linking via coroutines, simple events (e.g. Heal Event),
+binary events (like Unit Indexer) or complex event systems like Spell Event, Damage Engine and Unit Event.
 
 There are three main functions to keep in mind for the global API:
 
-CreateEvent
------------
+Event.create
+============
 Create an event that is recursion-proof by default, with easy syntax for GUI support.
 
 Due to optional parameters and return values, the API supports a very simple or very
 complex environment - depending on how you choose to use it.
 It is also easily extensible, so it can be used to support API for other event libraries.
 
-In its most basic form:
-=======================
-local registerEvent, runMyEvent = CreateEvent()     -> Create your event.
-RegisterMyEvent = registerEvent                     -> Global API for the user to call to register their callback function.
-runMyEvent()                        -> call this from your system when it's time for the event to execute.
+--In its most basic form:
+Event.create("MyEvent")     -> Create your event.
+Event.MyEvent.register()    -> Global API for the user to call to register their callback function.
+Event.MyEvent()             -> call this when it's time for the event to execute.
 
-A slight modification to the above to support GUI:
-==================================================
-local registerEvent, runMyEvent = CreateEvent("udg_MyEventForGUI")
-...From a trigger:...
-Game - Value of MyEventForGUI becomes Equal to 0.00
+--If GUI has a variable by the same name, it hooks it internally (hiding the ugliness) to allow this to work:
+Game - Value of MyEvent becomes Equal to 0.00
+
+NOTE - the value is the priority used in the event sequence, so higher-registered numbers run first, down to lower numbers.
 
 WaitForEvent
 ============
@@ -41,12 +41,17 @@ ControlEventRecursion
 Useful only if wanting recursion for a specific function to be able to exceed a certain
 point, but also useful for debugging (as it returns the current depth and max depth).
 ]]
-local events={}
+
+local eventStrs = {}
+local Event = {}
+eventStrs.__index = function(_, string) return rawget(Event, rawget(eventStrs, string)) end
+setmetatable(Event, eventStrs)
+
 local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, recycleEventIndex, globalFuncRef, runEvent
 local weakTable={__mode="k"}
 local userFuncList=setmetatable({}, weakTable)
 
----@param eventStr?         string      - Reserved only for GUI trigger registration
+---@param eventStr?         string      - Name the event. Also useful for GUI trigger registration
 ---@param isLinkable?       boolean     - If true, will use event linking to bind events when possible.
 ---@param maxEventDepth?    integer     - Defaults to 1. If 0, events are forbidden to branch off of each other.
 ---@param customRegister?   fun(userFunc:function, continue?:fun(editedFunc:fun(), noHook:boolean), firstReg?:boolean, trigRef?:trigger, opCode?:limitop, priority?:number):function,function
@@ -56,10 +61,10 @@ local userFuncList=setmetatable({}, weakTable)
 ---@return integer          eventIndex  - If Lua users want to use "WaitForEvent", they need this value in order to know what to wait for.
 function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
     local thisEvent   = createEventIndex()  -- each event needs a unique numerical index.
-    events[thisEvent] = DoNothing           -- use a dummy function to enable Hook without having to use it as a default function.
+    Event[thisEvent]  = DoNothing           -- use a dummy function to enable Hook without having to use it as a default function.
     maxEventDepth     = maxEventDepth or 1  -- apply the default recusion depth allowance for when none is specified.
     --Declare top-level variables needed for use within this particular event.
-    local removeEventHook, unpauseList, trigRef, opCode
+    local unpauseList, trigRef, opCode
     local registerEvent=function(userFunc, priority, disablePausing, manualControl)
         local evaluator, wrapper, nextEvent, firstReg
         
@@ -142,8 +147,7 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             if noHook then
                 nextEvent,removeUserHook=DoNothing,DoNothing
             else
-                nextEvent,removeUserHook=AddHook(thisEvent, editedFunc, priority, events)  --Hook the processed function to the event.
-                removeEventHook=removeUserHook --Really only needs to be done once.
+                nextEvent,removeUserHook=AddHook(thisEvent, editedFunc, priority, Event)  --Hook the processed function to the event.
             end
             local enablerFunc
             enablerFunc=function(pause, autoUnpause)
@@ -174,53 +178,62 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             return continue(wrapper)
         end
     end
-    local removeTRVE
+    local _,removeTRVE,parsedEventStr
     if eventStr then
-        if isLinkable then
-            --Align the "global.X" syntax accordingly, so that it works properly with Set WaitForEvent = SomeEvent.
-            pcall(function() globals[eventStr]=thisEvent end) --Have to pcall this, as there is no safe "getter" function to check if the real is indexed to the global to begin with.
-            
-            if remap and not globalRemapCalled then
-                globalRemapCalled=true
-                remap("udg_WaitForEvent", nil, WaitForEvent)
-                remap("udg_EventIndex", function() return globalEventIndex end)
-                remap("udg_EventRecusion", nil, function(maxDepth)
-                    if globalFuncRef then
-                        globalFuncRef.maxDepth=maxDepth
-                    end
-                end)
+        eventStrs[eventStr] = thisEvent
+        if eventStr:sub(1,4) ~= "udg_" then
+            parsedEventStr = "udg_"..eventStr
+            if not _G[parsedEventStr] then
+                parsedEventStr = nil
             end
         end
-        local oldTRVE
-        oldTRVE,removeTRVE=AddHook("TriggerRegisterVariableEvent",
-        function(userTrig, userStr, userOp, userVal)    --This hook runs whenever TriggerRegisterVariableEvent is called:
-            if eventStr==userStr then
-                local cachedTrigFunc
-                if cachedTrigFuncs then
-                    cachedTrigFunc=cachedTrigFuncs[userTrig]
-                else
-                    cachedTrigFuncs=setmetatable({},weakTable)--will only be called once per game.
-                end
-                if not cachedTrigFunc then
-                    cachedTrigFunc=function()
-                        if IsTriggerEnabled(userTrig) and TriggerEvaluate(userTrig) then
-                            TriggerExecute(userTrig)
-                        end
+        if parsedEventStr then --only proceed with this block if this is a GUI-compatible string.
+            if isLinkable then
+                --Align the "global.X" syntax accordingly, so that it works properly with Set WaitForEvent = SomeEvent:
+                pcall(function() globals[parsedEventStr]=thisEvent end) --Have to pcall this, as there is no safe "getter" function to check if the real is indexed to the global to begin with.
+                
+                if remap and not globalRemapCalled then
+                    globalRemapCalled=true
+                    if sleep then
+                        remap("udg_WaitForEvent", nil, WaitForEvent)
+                        remap("udg_SleepEvent", nil, SleepEvent)
                     end
-                    cachedTrigFuncs[userTrig]=cachedTrigFunc
+                    remap("udg_EventIndex", function() return globalEventIndex end)
+                    remap("udg_EventRecusion", nil, function(maxDepth)
+                        if globalFuncRef then
+                            globalFuncRef.maxDepth=maxDepth
+                        end
+                    end)
                 end
-                trigRef,opCode=userTrig,userOp
-                registerEvent(cachedTrigFunc, userVal)
-                trigRef,opCode=nil,nil
-            else
-                return oldTRVE(userTrig, userStr, userOp, userVal)
             end
-        end)
+            _,removeTRVE=AddHook("TriggerRegisterVariableEvent",
+            function(userTrig, userStr, userOp, userVal)    --This hook runs whenever TriggerRegisterVariableEvent is called:
+                if parsedEventStr==userStr then
+                    local cachedTrigFunc
+                    if cachedTrigFuncs then
+                        cachedTrigFunc=cachedTrigFuncs[userTrig]
+                    else
+                        cachedTrigFuncs=setmetatable({},weakTable)--will only be called once per game.
+                    end
+                    if not cachedTrigFunc then
+                        cachedTrigFunc=function()
+                            if IsTriggerEnabled(userTrig) and TriggerEvaluate(userTrig) then
+                                TriggerExecute(userTrig) --Needs PreciseWait if used with sleeping coroutines.
+                            end
+                        end
+                        cachedTrigFuncs[userTrig]=cachedTrigFunc
+                    end
+                    trigRef,opCode=userTrig,userOp
+                    registerEvent(cachedTrigFunc, userVal)
+                    trigRef,opCode=nil,nil
+                else
+                    return TriggerRegisterVariableEvent.actual(userTrig, userStr, userOp, userVal)
+                end
+            end)
+        end
     end
-    local running
-    return registerEvent,
-    --Second return value is a function that runs the event when called. Any number of paramters can be specified, but the first should be unique to the event instance you're running.
-    function(eventIndex, specialExec, ...)
+    local running, next
+    local function execute(eventIndex, specialExec, ...)
         if running then
             --rather than going truly recursive, queue the event to be ran after the first event, and wrap up any events queued before this.
             local max = globalFuncRef.maxDepth or maxEventDepth
@@ -239,12 +252,12 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
         else
             local oldIndex,oldList=globalEventIndex,globalFuncRef--cache so that different overlapping events don't have a conflict.
             running=true
-            runEvent(events[thisEvent], eventIndex, specialExec, ...)
+            runEvent(next, eventIndex, specialExec, ...)
             while running~=true do
                 --This is the same recursion processing introduced in Damage Engine 5.
                 local runner=running; running=true
                 for _,args in ipairs(runner) do
-                    runEvent(events[thisEvent], table.unpack(args, 1, args.n))
+                    runEvent(next, table.unpack(args, 1, args.n))
                 end
             end
             if unpauseList then
@@ -255,40 +268,45 @@ function CreateEvent(eventStr, isLinkable, maxEventDepth, customRegister)
             running=nil
             globalEventIndex,globalFuncRef=oldIndex,oldList--retrieve so that overlapping events don't break.
         end
-    end,
+    end
+    next = AddHook(thisEvent, execute, _EVENT_PRIORITY, Event)
+    Event[thisEvent].register = registerEvent
+    return registerEvent,
+    --Second return value is a function that runs the event when called. Any number of paramters can be specified, but the first should be unique to the event instance you're running.
+    Event[thisEvent],
     --Third return value is used to remove the event. Usually unused, as most events would be persistent.
     function()
         if thisEvent~=0 then
-            if removeEventHook and events[thisEvent]~=DoNothing then
-                removeEventHook(true)
-            end
-            if removeTRVE then
-                removeTRVE()
+            if eventStr then
+                eventStrs[eventStr] = nil
+                if removeTRVE then
+                    removeTRVE()
+                end
             end
             recycleEventIndex(thisEvent)
-            events[thisEvent] = nil
-            thisEvent         = 0
+            thisEvent        = 0
         end
     end,
     thisEvent --lastly, return the event ID for Lua users who want to be able to wait for events.
 end
+Event.create = CreateEvent --yes, this syntax works, too. I may eventually deprecate the CreateEvent function in favor of this.
 do
-    local eventN=0
-    local eventR={}
+    local uniqueEventIndices=0
+    local recycledEvents={}
     --works indentically to vJass struct index handling
     ---@return integer
     createEventIndex=function()
-        if #eventR>0 then
-            return table.remove(eventR, #eventR)
+        if #recycledEvents>0 then
+            return table.remove(recycledEvents, #recycledEvents)
         else
-            eventN=eventN+1
-            return eventN
+            uniqueEventIndices=uniqueEventIndices+1
+            return uniqueEventIndices
         end
     end
     ---@param index integer
     recycleEventIndex=function(index)
-        table.insert(eventR, index)
-        events[index]=nil
+        table.insert(recycledEvents, index)
+        Event[index]=nil
     end
     runEvent = function(eventFunc, eventIndex, specialFunc, ...)
         globalEventIndex=eventIndex
@@ -304,6 +322,16 @@ do
         globalFuncRef[globalEventIndex]={co=coroutine.running(), waitFor=whichEvent}
         coroutine.yield()
     end
+    if sleep then
+        ---Yields the coroutine while preserving the event index for the user.
+        ---@param duration any
+        function SleepEvent(duration)
+            local index = globalEventIndex
+            PolledWait(duration)
+            globalEventIndex = index
+        end
+    end
+
     ---Raises or lowers the recursion tolerance for the running function.
     ---The return values are intended for debugging. I expect the automatic recursion handling to be sufficient for most cases.
     ---@param maxDepth? integer
