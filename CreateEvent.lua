@@ -287,7 +287,7 @@ function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
         end
     end
 end
-CreateEvent = Event.create -- I may eventually deprecate this function function.
+CreateEvent = Event.create -- I may eventually deprecate this function.
 do
     local uniqueEventIndices=0
     local recycledEvents={}
