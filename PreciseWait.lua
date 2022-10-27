@@ -3,7 +3,7 @@ OnGlobalInit("PreciseWait", function()
     local hook  = Require.optional "AddHook"     --https://www.hiveworkshop.com/threads/hook.339153
     local remap = Require.optional "GlobalRemap" --https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
 
-    --Precise Wait v1.5.0.0
+    --Precise Wait v1.5.1.0
     --This changes the default functionality of TriggerAddAction, PolledWait
     --and (because they don't work with manual coroutines) TriggerSleepAction and SyncSelections.
     
@@ -41,13 +41,11 @@ OnGlobalInit("PreciseWait", function()
     hook("PolledWait", wait, _WAIT_PRIORITY)
     hook("TriggerSleepAction", wait, _WAIT_PRIORITY)
     
-    local oldSync
-    oldSync = hook("SyncSelections",
-    function()
+    hook("SyncSelections", function()
         local thread = coroutine.running()
         if thread then
             function SyncSelectionsHelper() --this function gets re-declared each time, so calling it via ExecuteFunc will still reference the correct thread.
-                oldSync()
+                SyncSelections.original()
                 coroutine.resume(thread)
             end
             ExecuteFunc("SyncSelectionsHelper")
@@ -55,11 +53,9 @@ OnGlobalInit("PreciseWait", function()
         end
     end)
     
-    local oldAdd
-    oldAdd = hook("TriggerAddAction", function(trig, func)
-
+    hook("TriggerAddAction", function(trig, func)
         --Return a function that will actually be added as the triggeraction, which itself wraps the actual function in a coroutine.
-        return oldAdd(trig, function() coroutine.resume(coroutine.create(func)) end)
+        return TriggerAddAction.original(trig, function() coroutine.resume(coroutine.create(func)) end)
     end, _ACTION_PRIORITY)
     
 end)
