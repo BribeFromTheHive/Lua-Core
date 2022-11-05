@@ -1,6 +1,6 @@
 --[[
 --------------------------------------------------------------------
-AddHook version 5.1
+AddHook version 5.1.1
  Author: Bribe
  Special Thanks: Jampion and Eikonium
 --------------------------------------------------------------------
@@ -46,7 +46,8 @@ A small showcase of what you can do with the API:
 ]]------------------------------------------------------------------
 do
     local max = math.max
-    local hookProperties = {
+    local funcProxyTable = {}
+    local tableMetatable = {
         __call = function(self, ...) --the new way of calling hooks, introduced in 5.1
             self.current = #self
             local result = self[self.current][1](...)
@@ -80,49 +81,63 @@ do
             end
         end
     end
-    
+    local function createHookTable(native, current)
+        return setmetatable({[0]={native}, current=current}, tableMetatable)
+    end
+
     ---@param nativeKey        any         Usually a string (the name of the old function you wish to hook)
     ---@param callback         function    The function you want to run when the native is called. The args and return values would normally mimic the function that is hooked.
     ---@param priority?        number      Defaults to 0. Hooks are called in order of highest priority down to lowest priority.
     ---@param hostTable?       table       Defaults to _G, which is the table that stores all global variables.
     ---@param default?         function    If the native does not exist in the host table, use this default instead.
     ---@param usesMetatable?   boolean     Defaults to true if the "default" parameter is given.
-    ---@return fun(params_of_native?:any):any  callNative
-    ---@return fun(remove_all_hooks?:boolean)  callRemoveHook
+    ---@return fun(params_of_native?:any):any callNative
+    ---@return fun(remove_all_hooks?:boolean) callRemoveHook
     function AddHook(nativeKey, callback, priority, hostTable, default, usesMetatable)
         priority  = priority  or 0
         hostTable = hostTable or _G
         
-        if default and usesMetatable ~= false then
-            --Index the hook to the metatable instead of the user's given table. Create a new metatable in case none existed.
-            hostTable = getmetatable(hostTable) or getmetatable(setmetatable(hostTable, {}))
+        local function getNative()
+            return rawget(hostTable, nativeKey) or default or error("Nothing could be hooked at: "..nativeKey)
         end
-        local index   = 1
-        local hooks   = rawget(hostTable, nativeKey) or default or error("Nothing could be hooked at: "..nativeKey)
-        local typeOf  = type(hooks)
-        if typeOf == "table" then
-            local exitwhen   = #hooks
+        
+        local proxy
+        if usesMetatable or (default and usesMetatable == nil) then
+            --Index the hook to the metatable instead of the user's given table. Create a new metatable in case none existed.
+            hostTable                            = getmetatable(hostTable)              or getmetatable(setmetatable(hostTable, {}))
+            funcProxyTable[hostTable]            = funcProxyTable[hostTable]            or {}
+            proxy                                = funcProxyTable[hostTable][nativeKey] or createHookTable(getNative())
+            funcProxyTable[hostTable][nativeKey] = proxy
+        end
+        local index  = 1
+        local hooks  = proxy or getNative()
+        local typeOf = type(hooks)
+        if proxy and #proxy == 0 then
+            rawset(hostTable, nativeKey, function(...) --metatable methods like __index cannot be impersonated by a table that uses metamethods such as __call.
+                return proxy[#proxy][1](...)           --I learned this the hard way when trying to find out why my hooks weren't working on GlobalRemap after Hook 5.1.
+            end)
+        elseif typeOf == "table" then
+            local exitwhen = #hooks
             repeat
-                --Search manually for an index based on the priority of all other hooks.
-                if hooks[index].priority > priority then break end
+                if hooks[index].priority > priority then break end --Search manually for an index based on the priority of all other hooks.
                 index = index + 1
             until index > exitwhen
         elseif typeOf == "function" then
-            hooks = setmetatable({[0]={hooks}, native=hooks, current=0}, hookProperties)
+            hooks = createHookTable(hooks, 0)
             rawset(hostTable, nativeKey, hooks)
         else
             error("Tried to hook an incorrect type: "..typeOf)
         end
         editList(hooks, index, {callback, priority = priority, setIndex = function(val) index = val end})
-        return function(...)
+        return proxy and function(...)
+            return hooks[index - 1][1](...) --used for metatables (no need to track the current position)
+        end or function(...)
             hooks.current = index - 1
-            return hooks[index - 1][1](...)
+            return hooks[index - 1][1](...) --used for native tables (tracks the current position)
         end,
         function(removeAll)
             if removeAll or index == 1 and #hooks == 1 then
-                --Remove all hooks by restoring the original function to the host table.
-                --The native is stored at index [0][1]
-                rawset(hostTable, nativeKey, hooks[0][1])
+                rawset(hostTable, nativeKey, hooks[0][1]) --Remove all hooks by restoring the original function to the host table. The native is stored at index [0][1]
             else
                 editList(hooks, index)
             end
