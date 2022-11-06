@@ -1,7 +1,8 @@
-do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
+OnInit("vJass2Lua", function(uses) --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
     
-    --Requires optional Global Initialization: https://www.hiveworkshop.com/threads/global-initialization.317099/
-    --Requires optional Global Variable Remapper: https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
+    local remap = uses.optionally "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+    
+    vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.3 by Bribe
 
     local rawget = rawget
     local rawset = rawset
@@ -13,15 +14,15 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
 
     --Extract the globals declarations from the "globals" block so we can remap them via Global Variable Remapper to use globals.var = blah syntax.
     --Although quite a bit of a hack, it gets the job done without the parser knowing which variables need to be processed like this.
-    do
+    if remap then
         local oldGlobals = globals
         function globals(func)
+            oldGlobals(func)
             local t = {}
             func(t)
-            for _,v in pairs(t) do
-                GlobalRemap(v, function() return globals[v] end, function(val) globals[v] = val end)
+            for _,v in ipairs(t) do
+                remap(v, function() return oldGlobals[v] end, function(val) oldGlobals[v] = val end)
             end
-            oldGlobals(func)
         end
     end
     ---@class vJass : table
@@ -76,8 +77,7 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
                 local n = #macroargs
 
                 -- the below string pattern checks for $word_with_or_without_underscores$.
-                -- Need to use double percentages in World Editor, but a single percentage on each should be used when testing code outside of World Editor.
-                load(macro:gsub("%%$([%%w_%%.]+)%%$", function(arg)
+                load(macro:gsub("[$]([A-Za-z_.]+)[$]", function(arg)
                     for i = 1, n do -- search all of the textmacro's registered arguments to find out which of the pointers match
                         if arg == macroargs[i] then
                             return args[i] --substitute the runtextmacro arg string at the matching pointer position
@@ -157,15 +157,9 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
     do
         local mt
         local getMt = function()
-            if not mt then
-                mt = {
-                    __index = function(self, key)
-                        local new = {}
-                        rawset(self, key, new)
-                        return new
-                    end
-                }
-            end
+            mt = mt or {__index = function(self, key)
+                return rawget(rawset(self, key, {}), key)
+            end}
             return mt
         end
         vJass.array2D = function(w, h)
@@ -253,13 +247,19 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
 
     local mt = {
         __index = function(self, key)
-            local get = rawget(self, "_getindex") --declaring a _getindex function in your struct enables it to act as method operator []
-            return get and get(self, key) or rawget(Struct, key) --however, it doesn't extend to child structs.
-        end
-        ,
+            local getter = rawget(self, "_getindex") --declaring a _getindex function in your struct enables it to act as method operator []
+            if getter then
+                return getter(self, key)
+            end
+            return rawget(Struct, key) --however, it doesn't extend to child structs.
+        end,
         __newindex = function(self, key, val)
-            local set = rawget(self, "_setindex") --declaring a _setindex function in your struct enables it to act as method operator []=
-            if set then set(self, key, val) else rawset(self, key, val) end
+            local setter = rawget(self, "_setindex") --declaring a _setindex function in your struct enables it to act as method operator []=
+            if setter then
+                setter(self, key, val)
+            else
+                rawset(self, key, val)
+            end
         end
     }
     setmetatable(Struct, mt)
@@ -376,18 +376,17 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
     
     local function InitOperators(struct)
         if not struct.__getterFuncs then
-            local mt = getmetatable(struct)
-            if not mt then mt = {} ; setmetatable(struct, mt) end
+            local smt = getmetatable(struct) or getmetatable(setmetatable(struct, {}))
             struct.__getterFuncs = {}
             struct.__setterFuncs = {}
-            mt.__index = function(self, var)
+            smt.__index = function(self, var)
                 local call = self.__getterFuncs[var]
                 if call then return call(self)
                 elseif not self.__setterFuncs[var] then
                     return rawget(rawget(self, "parent") or Struct, var)
                 end
             end
-            mt.__newindex = function(self, var, val)
+            smt.__newindex = function(self, var, val)
                 local call = rawget(self, "__setterFuncs")
                 call = call[var]
                 if call then call(self, val)
@@ -414,15 +413,18 @@ do vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.2.1.0 by Bribe
         self.__getterFuncs[var] = func
     end
     
-    if OnGlobalInit then
-        OnGlobalInit(function()
-            for _,init in ipairs(moduleQueue) do pcall(init) end
+    OnInit "Init vJass Modules and Structs"
 
-            for _,struct in ipairs(structQueue) do
-                local init = rawget(struct, "onInit")
-                if init then pcall(init) end
-            end
-            moduleQueue, structQueue = nil, nil
-        end)
+    local call = try or pcall
+
+    for _,init in ipairs(moduleQueue) do call(init) end
+
+    for _,struct in ipairs(structQueue) do
+        local init = rawget(struct, "onInit")
+        if init then call(init) end
     end
-end --end of Struct library
+    moduleQueue, structQueue = nil, nil
+
+    OnInit "Init vJass Libraries"
+    OnInit "Init vJass Scopes"
+end)
