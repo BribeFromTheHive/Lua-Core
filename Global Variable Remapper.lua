@@ -1,11 +1,12 @@
-OnGlobalInit("GlobalRemap", function()
+OnInit("GlobalRemap", function(needs)
 
-    Require "AddHook" --https://www.hiveworkshop.com/threads/hook.339153
+    needs "AddHook" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
 --[[
 --------------------------------------------------------------------------------------
-Global Variable Remapper v1.3.1 by Bribe
+Global Variable Remapper v1.3.2 by Bribe
 
-- Intended to empower the GUI user-base and those who design systems for them.
+- Turns normal GUI variable references into function calls that integrate seamlessly
+  with a Lua framework.
 
 API:
     GlobalRemap(variableStr[, getterFunc, setterFunc])
@@ -30,11 +31,9 @@ local oldGet, oldSet
 oldGet = AddHook("__index", function(tab, index)
     if getters[index]~=nil then
         return getters[index]()
-    else
-        --print("Trying to read undeclared global: "..tostring(index))
-        return oldGet(tab, index)
     end
-end, 0, _G, default)
+    return oldGet(tab, index)
+end, 0, _G, rawget)
 
 oldSet = AddHook("__newindex", function(tab, index, val)
     if setters[index]~=nil then
@@ -59,21 +58,11 @@ end
 ---@param getFunc? fun(index : any): any
 ---@param setFunc? fun(index : any, val : any)
 function GlobalRemapArray(var, getFunc, setFunc) --will get inserted into GlobalRemap after testing.
-    local tab = {}
-    _G[var] = tab
     getFunc = getFunc or default
     setFunc = setFunc or default
-    setmetatable(tab, {
-        __index = function(_, index)
-            return getFunc(index)
-        end,
-        __newindex = function(_, index, val)
-            --if index==nil then
-            --    print("Attempt to index a nil value: "..GetStackTrace())
-            --    return
-            --end
-            setFunc(index, val)
-        end
+    _G[var] = setmetatable({}, {
+        __index = function(_, index) return getFunc(index) end,
+        __newindex = function(_, index, val) setFunc(index, val) end
     })
 end
 end)
