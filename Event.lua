@@ -1,13 +1,13 @@
-OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
+OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total_Initialization.lua
 
 local hook  = require "AddHook"            --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
-local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global_Variable_Remapper.lua
 local sleep = require.lazily "PreciseWait" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/PreciseWait.lua
 
 local _EVENT_PRIORITY = 1000 --The hook priority assigned to the event executor.
 
 --[[
-Event v1.4.1
+Event v1.4.2
 
 Event is built for GUI support, event linking via coroutines, simple events (e.g. Heal Event),
 binary events (like Unit Indexer) or complex event systems like Spell Event, Damage Engine and Unit Event.
@@ -182,7 +182,7 @@ function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
         eventStrs[eventStr] = thisEvent
         if eventStr:sub(1,4) ~= "udg_" then
             parsedEventStr = "udg_"..eventStr
-            if not _G[parsedEventStr] then
+            if not _G[parsedEventStr] and not pcall(function()return globals[parsedEventStr] end) then
                 parsedEventStr = nil
             end
         end
