@@ -1,5 +1,5 @@
 --[==[
-Total Initialization v5.0 by Bribe
+Total Initialization v5.1 by Bribe
 
 Your one-stop shop for initialization and requirements.
 
@@ -82,8 +82,8 @@ local _G     = _G
 local rawget = rawget
 local insert = table.insert
 
-local function doesVariableExist(name) --added for readability.
-    return rawget(_G, name)~=nil
+local function doesVariableExist(name, source)
+    return rawget(source or _G, name)~=nil
 end
 
 local library
@@ -307,7 +307,8 @@ if _USE_LIBRARY_API then
     ---Needed for functionality of Require, Require.optional and OnInit functions which declare a name string.
     ---@param whichInit string|table
     ---@param userFunc fun()
-    function OnInit.library(whichInit, userFunc)
+    function OnInit.library(whichInit, userFunc, source)
+        source = source or _G
         local  nameOfInit
         local  typeOfInit =         type(whichInit)
         if     typeOfInit=="string" then whichInit = {whichInit}
@@ -324,7 +325,7 @@ if _USE_LIBRARY_API then
         end
         if _ERROR then
             for _,initName in ipairs(whichInit) do
-                if initName ~= _CUSTOM_INIT and not doesVariableExist(initName) then
+                if initName ~= _CUSTOM_INIT and not doesVariableExist(initName, source) then
                     insert(library.initiallyMissingRequirements, initName)
                 end
             end
@@ -333,14 +334,14 @@ if _USE_LIBRARY_API then
             if whichInit then
                 for _,initName in ipairs(whichInit) do
                     --check all strings in the table and make sure they exist in _G or were already initialized by OnInit.library with a non-global name.
-                    if not doesVariableExist(initName) and not library.loaded[initName] then return end
+                    if not doesVariableExist(initName, source) and not library.loaded[initName] then return end
                 end
                 if not forceOptional and whichInit.optional then
                     for _,initName in ipairs(whichInit.optional) do
                         --If the item isn't yet initialized, but is queued to initialize, then we postpone the initialization.
                         --Declarations would be made in the Lua root, so if optional dependencies are not found by the time
                         --OnInit.library runs its triggers, we can assume that it doesn't exist in the first place.
-                        if not doesVariableExist(initName) and library.loaded[initName]==false then return end
+                        if not doesVariableExist(initName, source) and library.loaded[initName]==false then return end
                     end
                 end
                 whichInit = nil --flag as nil to prevent recursive calls.
@@ -355,12 +356,25 @@ end
 
 if _USE_LIBRARY_API and _USE_COROUTINES then
     local function addReq(optional, ...)
-        if not doesVariableExist(...) and not optional or library.loaded[...]==false then
+        local packed = {...}
+        local req = packed[1]
+        local source = _G
+        if type(req) == "string" then
+            local index, prop = req:match("([\x25w_]+)\x25.(.*)")
+            if index and prop then
+                source, req = rawget(_G, index), prop --user is requiring using "table.property" syntax
+                source = source or addReq(optional, index) --If the source is nil, yield until it is not.
+                if not source then
+                    return --The source table for the requirement wasn't found, so disregard the rest (this only happens with optional requirements).
+                end
+            end
+        end
+        if not doesVariableExist(req, source) and not optional or library.loaded[req]==false then
             local co = coroutine.running()
-            OnInit.library(optional and {optional={...}} or {...}, function() coroutine.resume(co) end)
+            OnInit.library(optional and {optional=packed} or packed, function() coroutine.resume(co) end, source)
             coroutine.yield(co)
         end
-        return library.loaded[...]
+        return library.loaded[req] or rawget(source, req)
     end
     local function optional(...) return addReq(true,  ...) end
     Require = {
