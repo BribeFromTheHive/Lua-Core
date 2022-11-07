@@ -1,6 +1,6 @@
 --[[
 --------------------------------------------------------------------
-AddHook version 5.1.1
+AddHook version 5.1.1.1
  Author: Bribe
  Special Thanks: Jampion and Eikonium
 --------------------------------------------------------------------
@@ -98,7 +98,7 @@ do
         hostTable = hostTable or _G
         
         local function getNative()
-            return rawget(hostTable, nativeKey) or default or error("Nothing could be hooked at: "..nativeKey)
+            return rawget(hostTable, nativeKey) or default or error("Nothing could be hooked at: "..tostring(nativeKey))
         end
         
         local proxy
