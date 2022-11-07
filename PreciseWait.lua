@@ -1,15 +1,16 @@
-OnGlobalInit("PreciseWait", function()
+OnInit("PreciseWait", function(require)        --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
 
-    local hook  = Require.optional "AddHook"     --https://www.hiveworkshop.com/threads/hook.339153
-    local remap = Require.optional "GlobalRemap" --https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
+    local hook  = require.lazily "AddHook"     --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
+    local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
 
-    --Precise Wait v1.5.1.0
+    --Precise Wait v1.5.2.0
     --This changes the default functionality of TriggerAddAction, PolledWait
     --and (because they don't work with manual coroutines) TriggerSleepAction and SyncSelections.
     
     local _ACTION_PRIORITY  =  1 --Specify the hook priority for hooking TriggerAddAction (higher numbers run earlier in the sequence).
     local _WAIT_PRIORITY    = -2 --The hook priority for TriggerSleepAction/PolledWait
-    
+    local _SYNC_HELPER_NAME = "SyncSelectionsHelper" --Used for ensuring SyncSelections works correctly. Must not interfere with any externally-named globals.
+
     local function wait(duration)
         local thread = coroutine.running()
         if thread then
@@ -26,12 +27,12 @@ OnGlobalInit("PreciseWait", function()
         --This enables GUI to access WaitIndex as a "local" index for their arrays, which allows
         --the simplest fully-instanciable data attachment in WarCraft 3's GUI history. However,
         --using it as an array index will cause memory leaks over time, unless you also install
-        --Lua-Infused GUI: https://www.hiveworkshop.com/threads/lua-infused-gui-automatic-group-location-rect-and-force-leak-prevention.317084/
+        --Lua-Infused GUI: https://github.com/BribeFromTheHive/Lua-Core/blob/main/Lua-Infused-GUI.lua
 
         remap("udg_WaitIndex", coroutine.running)
     end
     if not hook then
-        hook = function(varName, userFunc)
+        hook = function(varName, userFunc, _)
             local old = rawget(_G, varName)
             rawset(_G, varName, userFunc)
             return old
@@ -44,18 +45,17 @@ OnGlobalInit("PreciseWait", function()
     hook("SyncSelections", function()
         local thread = coroutine.running()
         if thread then
-            function SyncSelectionsHelper() --this function gets re-declared each time, so calling it via ExecuteFunc will still reference the correct thread.
+            _G[_SYNC_HELPER_NAME] = function() --this function gets re-declared each time, so calling it via ExecuteFunc will still reference the correct thread.
                 SyncSelections.original()
                 coroutine.resume(thread)
             end
-            ExecuteFunc("SyncSelectionsHelper")
+            ExecuteFunc(_SYNC_HELPER_NAME)
             coroutine.yield(thread)
         end
     end)
-    
+
     hook("TriggerAddAction", function(trig, func)
         --Return a function that will actually be added as the triggeraction, which itself wraps the actual function in a coroutine.
         return TriggerAddAction.original(trig, function() coroutine.resume(coroutine.create(func)) end)
     end, _ACTION_PRIORITY)
-    
 end)
