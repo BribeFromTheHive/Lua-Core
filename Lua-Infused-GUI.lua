@@ -12,13 +12,19 @@
     
     Provides GUI.loopArray for safe iteration over a __jarray
     
-    Updated: 20 Oct 2022
+    Updated: 7 Nov 2022
+
+    Uses optionally:
+        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
+        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
+        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+        https://github.com/BribeFromTheHive/Lua-Core/blob/main/UnitEvent.lua
 --]]
 GUI = {}
 do
 --Configurables
-local _USE_GLOBAL_REMAP = false --Found on https://www.hiveworkshop.com/threads/global-variable-remapper-the-future-of-gui.339308/
-local _USE_UNIT_EVENT = false   --set to true if you have UnitEvent in your map and want to automatically remove units from their unit groups.
+local _USE_GLOBAL_REMAP = false --set to true if you want GUI to have extended functionality such as "udg_HashTableArray" (which gives GUI an infinite supply of shared hashtables)
+local _USE_UNIT_EVENT   = false --set to true if you have UnitEvent in your map and want to automatically remove units from their unit groups if they are removed from the game.
 
 --Define common variables to be utilized throughout the script.
 local _G = _G
@@ -91,8 +97,8 @@ do --[[
         return index
     end
     if _USE_GLOBAL_REMAP then
-        OnGlobalInit(function()
-            local remap = Require "GlobalRemapArray"
+        OnInit(function(import)
+            local remap = import "GlobalRemapArray"
             local hashes = __jarray()
             remap("udg_HashTableArray", function(index)
                 return load(hashes, index)
@@ -459,8 +465,8 @@ do
     GroupRemoveGroupEnum=nil
 
     if groups then
-        OnGlobalInit(function()
-            Require "UnitEvent"
+        OnInit(function(import)
+            import "UnitEvent"
             UnitEvent.onRemoval(function(data)
                 local u = data.unit
                 local g = groups[u]
@@ -687,10 +693,12 @@ function SetUnitPropWindowBJ(whichUnit, propWindow)
     SetUnitPropWindow(whichUnit, math.rad(propWindow))
 end
 
-if _USE_GLOBAL_REMAP then OnGlobalInit(function()
-    Require "GlobalRemap"
-    GlobalRemap("udg_INFINITE_LOOP", function() return -1 end) --a readonly variable for infinite looping in GUI.
-end) end
+if _USE_GLOBAL_REMAP then
+    OnInit(function(import)
+        import "GlobalRemap"
+        GlobalRemap("udg_INFINITE_LOOP", function() return -1 end) --a readonly variable for infinite looping in GUI.
+    end)
+end
 
 do
     local cache=__jarray()
