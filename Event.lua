@@ -1,13 +1,13 @@
-OnGlobalInit(function()
+OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
 
-Require "AddHook"                            --https://www.hiveworkshop.com/threads/hook.339153/
-local remap = Require.optional "GlobalRemap" --https://www.hiveworkshop.com/threads/global-variable-remapper.339308
-local sleep = Require.optional "PreciseWait"
+local hook  = require "AddHook"            --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
+local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+local sleep = require.lazily "PreciseWait" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/PreciseWait.lua
 
 local _EVENT_PRIORITY = 1000 --The hook priority assigned to the event executor.
 
 --[[
-Event v1.4
+Event v1.4.1
 
 Event is built for GUI support, event linking via coroutines, simple events (e.g. Heal Event),
 binary events (like Unit Indexer) or complex event systems like Spell Event, Damage Engine and Unit Event.
@@ -42,7 +42,7 @@ Useful only if wanting recursion for a specific function to be able to exceed a 
 point, but also useful for debugging (as it returns the current depth and max depth).
 ]]
 
-local Event = {}
+Event = {}
 local eventStrs = {} --key, values formatted as ["eventName"] = eventID.
 eventStrs.__index = function(_, string) return rawget(Event, rawget(eventStrs, string)) end
 setmetatable(Event, eventStrs)
@@ -146,7 +146,7 @@ function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
             if noHook then
                 nextEvent,removeUserHook=DoNothing,DoNothing
             else
-                nextEvent,removeUserHook=AddHook(thisEvent, editedFunc, priority, Event)  --Hook the processed function to the event.
+                nextEvent,removeUserHook=hook(thisEvent, editedFunc, priority, Event)  --Hook the processed function to the event.
             end
             local enablerFunc
             enablerFunc=function(pause, autoUnpause)
@@ -205,7 +205,7 @@ function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
                     end)
                 end
             end
-            _,removeTRVE=AddHook("TriggerRegisterVariableEvent",
+            _,removeTRVE=hook("TriggerRegisterVariableEvent",
             function(userTrig, userStr, userOp, userVal)    --This hook runs whenever TriggerRegisterVariableEvent is called:
                 if parsedEventStr==userStr then
                     local cachedTrigFunc
@@ -268,7 +268,7 @@ function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
             globalEventIndex,globalFuncRef=oldIndex,oldList--retrieve so that overlapping events don't break.
         end
     end
-    next = AddHook(thisEvent, execute, _EVENT_PRIORITY, Event)
+    next = hook(thisEvent, execute, _EVENT_PRIORITY, Event)
     Event[thisEvent].register = registerEvent
     return registerEvent,
     --Second return value is a function that runs the event when called. Any number of paramters can be specified, but the first should be unique to the event instance you're running.
