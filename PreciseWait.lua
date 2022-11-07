@@ -2,8 +2,11 @@ OnInit("PreciseWait", function(require)        --https://github.com/BribeFromThe
 
     local hook  = require.lazily "AddHook"     --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
     local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
-
-    --Precise Wait v1.5.2.0
+    if remap then
+        require.recommends "GUI"               --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Lua-Infused-GUI.lua
+    end
+    
+    --Precise Wait v1.5.2.1
     --This changes the default functionality of TriggerAddAction, PolledWait
     --and (because they don't work with manual coroutines) TriggerSleepAction and SyncSelections.
     
@@ -27,8 +30,7 @@ OnInit("PreciseWait", function(require)        --https://github.com/BribeFromThe
         --This enables GUI to access WaitIndex as a "local" index for their arrays, which allows
         --the simplest fully-instanciable data attachment in WarCraft 3's GUI history. However,
         --using it as an array index will cause memory leaks over time, unless you also install
-        --Lua-Infused GUI: https://github.com/BribeFromTheHive/Lua-Core/blob/main/Lua-Infused-GUI.lua
-
+        --Lua-Infused GUI.
         remap("udg_WaitIndex", coroutine.running)
     end
     if not hook then
