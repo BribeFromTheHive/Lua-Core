@@ -51,6 +51,10 @@ local globalRemapCalled, cachedTrigFuncs, globalEventIndex, createEventIndex, re
 local weakTable={__mode="k"}
 local userFuncList=setmetatable({}, weakTable)
 
+local function tryInitEventGlobal(eventStr, whichEvent)
+    globals[eventStr]=whichEvent
+end
+
 ---@param eventStr?         string      - Name the event. Also useful for GUI trigger registration
 ---@param isLinkable?       boolean     - If true, will use event linking to bind events when possible.
 ---@param maxEventDepth?    integer     - Defaults to 1. If 0, events are forbidden to branch off of each other.
@@ -182,14 +186,14 @@ function Event.create(eventStr, isLinkable, maxEventDepth, customRegister)
         eventStrs[eventStr] = thisEvent
         if eventStr:sub(1,4) ~= "udg_" then
             parsedEventStr = "udg_"..eventStr
-            if not _G[parsedEventStr] and not pcall(function()return globals[parsedEventStr] end) then
-                parsedEventStr = nil
-            end
+            parsedEventStr = (_G[parsedEventStr] or pcall(tryInitEventGlobal, parsedEventStr, 0)) and parsedEventStr
         end
         if parsedEventStr then --only proceed with this block if this is a GUI-compatible string.
             if isLinkable then
                 --Align the "global.X" syntax accordingly, so that it works properly with Set WaitForEvent = SomeEvent:
-                pcall(function() globals[parsedEventStr]=thisEvent end) --Have to pcall this, as there is no safe "getter" function to check if the real is indexed to the global to begin with.
+                if not pcall(tryInitEventGlobal, parsedEventStr, thisEvent) then
+                    _G[parsedEventStr] = thisEvent
+                end
                 
                 if remap and not globalRemapCalled then
                     globalRemapCalled=true
