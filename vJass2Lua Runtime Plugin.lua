@@ -1,6 +1,6 @@
-OnInit("vJass2Lua", function(uses) --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
+OnInit("vJass2Lua", function(uses) --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total_Initialization.lua
     
-    local remap = uses.optionally "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+    local remap = uses.optionally "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global_Variable_Remapper.lua
     
     vJass, Struct = {}, {} --vJass2Lua runtime plugin, version 2.3 by Bribe
 
