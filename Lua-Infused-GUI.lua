@@ -15,9 +15,9 @@
     Updated: 7 Nov 2022
 
     Uses optionally:
-        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
+        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total_Initialization.lua
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
-        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+        https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global_Variable_Remapper.lua
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/UnitEvent.lua
 --]]
 GUI = {}
