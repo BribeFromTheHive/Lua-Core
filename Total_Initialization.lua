@@ -3,12 +3,9 @@
 -- Your one-stop shop for initialization and requirements.
 
 do  --CONFIGURABLES:
-    --change this assignment to false or nil if you don't want to print any caught errors at the start of the game.
-    --You can otherwise change the color code to a different hex code if you want.
-    local _ERROR  = "ff5555"
-    
     local library = true --Change this to false if you don't use "Require" nor the OnInit.library API.
-    
+    local _ERROR = "Initialization Error: missing requirement: " --error message for missing library requirements (disable error messages by setting this to false).
+
     local function assignLegacyAPI(_ENV, OnInit)                                                                        ---@diagnostic disable-next-line: global-in-nil-env
         OnGlobalInit = OnInit; OnTrigInit = OnInit.trig; OnMapInit = OnInit.map; OnGameStart = OnInit.final              --Global Initialization Lite API
         --OnMainInit = OnInit.main; OnLibraryInit = OnInit.library; OnGameInit = OnInit.final                            --short-lived experimental API
@@ -21,7 +18,7 @@ do  --CONFIGURABLES:
     
     local _G, rawget, insert = _G, rawget, table.insert
 
-    local call   = _ERROR and try or pcall --'try' is extremely useful; found on https://www.hiveworkshop.com/threads/debug-utils-ingame-console-etc.330758/post-3552846
+    local call   = try or pcall --'try' is extremely useful; found on https://www.hiveworkshop.com/threads/debug-utils-ingame-console-etc.330758/post-3552846
     local fCall  = library and function(...)
         coroutine.wrap(call)(...)
     end or call
@@ -220,7 +217,7 @@ do  --CONFIGURABLES:
                         if co then coroutine.resume(co) end --resume only if it was yielded in the first place.
                         return loaded
                     elseif printErrors then
-                        print(_ERROR.."OnInit missing requirement: "..requirement)
+                        print(_ERROR..requirement)
                     end
                 end
             end
