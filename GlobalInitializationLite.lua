@@ -1,5 +1,5 @@
 --Global Initialization 'Lite' by Bribe, with special thanks to Tasyen and Eikonium
---Last updated 6 Nov 2022
+--Last updated 11 Nov 2022
 do
     local addInit
     function OnGlobalInit(initFunc) addInit("InitGlobals",               initFunc) end -- Runs once all GUI variables are instantiated.
@@ -29,11 +29,9 @@ do
                 init(name, continue) --run initializer immediately
             end
         end
-        hook("InitBlizzard",function()
-            hook("InitGlobals",function()
-                hook("InitCustomTriggers",function()
-                    hook "RunInitializationTriggers" --these functions are declared late in the Lua root, hence users need to wait until they have been declared.
-                end)
+        hook("InitGlobals",function()
+            hook("InitCustomTriggers",function() --InitCustomTriggers and RunInitializationTriggers are declared after the users' code,
+                hook "RunInitializationTriggers" --hence users need to wait until they have been declared.
             end)
         end)
         hook "MarkGameStarted"
