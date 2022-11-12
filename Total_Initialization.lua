@@ -3,8 +3,7 @@
 -- Your one-stop shop for initialization and requirements.
 
 do  --CONFIGURABLES:
-    local library = true --Change this to false if you don't use "Require" nor the OnInit.library API.
-    local _ERROR = "Initialization Error: missing requirement: " --error message for missing library requirements (disable error messages by setting this to false).
+    local library = {} --Change this to false if you don't use "Require" nor the OnInit.library API.
 
     local function assignLegacyAPI(_ENV, OnInit)                                                                        ---@diagnostic disable-next-line: global-in-nil-env
         OnGlobalInit = OnInit; OnTrigInit = OnInit.trig; OnMapInit = OnInit.map; OnGameStart = OnInit.final              --Global Initialization Lite API
@@ -13,7 +12,7 @@ do  --CONFIGURABLES:
         --OnTriggerInit = OnInit.trig; OnInitialization = OnInit.map                                                     --Forsakn's Ordered Indices API
     end
     --END CONFIGURABLES
-    -------------------
+
     OnInit = {}
     
     local _G, rawget, insert = _G, rawget, table.insert
@@ -31,10 +30,8 @@ do  --CONFIGURABLES:
             end
             initFuncQueue[name] = nil
         end
-        if library then
-            library.initialize()
-        end
-        if continue then continue() end
+        if library  then library:resume() end
+        if continue then continue()       end
     end
     do
         local function hook(hookName, continue)
@@ -54,19 +51,19 @@ do  --CONFIGURABLES:
             end)
         end)
         hook("MarkGameStarted", function()
-            if _ERROR and library then
-                for _,func in ipairs(library.initQueue) do
-                    func(nil, true) --print errors for missing requirements.
+            if library then
+                for _,func in ipairs(library.yielded) do
+                    func(nil, true) --run errors for missing requirements.
                 end
             end
             OnInit=nil;Require=nil  --remove API from _G
         end)
     end
-    local function installUserFunc(initName, libraryName, func)
+    local function addUserFunc(initName, libraryName, func)
         if not func then
             func = libraryName
-        elseif library and libraryName then --disregard 'nil' library names.
-            func = library.create(libraryName, func)
+        elseif library then
+            func = library:create(libraryName, func)
         end
         assert(type(func) == "function")
         initFuncQueue[initName] = initFuncQueue[initName] or {}
@@ -75,24 +72,24 @@ do  --CONFIGURABLES:
             runInitializers "root"
         end
     end
-    local function createInstaller(name)
+    local function createInit(name)
         ---Calls the user's initialization function during the map's loading process.
         ---@param libraryNameOrInitFunc string|function
         ---@param userInitFunc? fun(Require?:table):any
         return function(libraryNameOrInitFunc, userInitFunc)
-            installUserFunc(name, libraryNameOrInitFunc, userInitFunc)
+            addUserFunc(name, libraryNameOrInitFunc, userInitFunc)
         end
     end
-    OnInit.global = createInstaller "InitGlobals"
-    OnInit.trig   = createInstaller "InitCustomTriggers"
-    OnInit.map    = createInstaller "RunInitializationTriggers"
-    OnInit.final  = createInstaller "MarkGameStarted"
+    OnInit.global = createInit "InitGlobals"
+    OnInit.trig   = createInit "InitCustomTriggers"
+    OnInit.map    = createInit "RunInitializationTriggers"
+    OnInit.final  = createInit "MarkGameStarted"
     
     function OnInit:__call(libraryNameOrInitFunc, userInitFunc)
         if userInitFunc or type(libraryNameOrInitFunc)=="function" then ---@diagnostic disable-next-line: param-type-mismatch
             self.global(libraryNameOrInitFunc, userInitFunc) --Calling OnInit directly defaults to OnInit.global (AKA OnGlobalInit)
         elseif library then
-            library.yield(libraryNameOrInitFunc) --API handler for OnInit "Custom initializer"
+            library:declare(libraryNameOrInitFunc) --API handler for OnInit "Custom initializer"
         end
     end
     setmetatable(OnInit, OnInit)
@@ -118,65 +115,65 @@ do  --CONFIGURABLES:
             end
         end
         gmt.__newindex = newIndex
-        OnInit.root    = createInstaller "root"   -- Runs immediately during the Lua root, but is yieldable (allowing requirements) and pcalled.
-        OnInit.config  = createInstaller "config" -- Runs when "config" is called. Credit to @Luashine: https://www.hiveworkshop.com/threads/inject-main-config-from-we-trigger-code-like-jasshelper.338201/
-        OnInit.main    = createInstaller "main"   -- Runs when "main" is called. Idea from @Tasyen: https://www.hiveworkshop.com/threads/global-initialization.317099/post-3374063
+        OnInit.root    = createInit "root"   -- Runs immediately during the Lua root, but is yieldable (allowing requirements) and pcalled.
+        OnInit.config  = createInit "config" -- Runs when "config" is called. Credit to @Luashine: https://www.hiveworkshop.com/threads/inject-main-config-from-we-trigger-code-like-jasshelper.338201/
+        OnInit.main    = createInit "main"   -- Runs when "main" is called. Idea from @Tasyen: https://www.hiveworkshop.com/threads/global-initialization.317099/post-3374063
     end
-    if library then ---@diagnostic disable-next-line: cast-local-type
-        library = {
-            initQueue  = {},
-            loaded     = {},
-            yielded    = {},
-            packData   = function(name, ...) library.loaded[name] = table.pack(...) end,
-            initialize = function()
-                if library.initQueue[1] then
-                    local continue, tempQueue, forceOptional
-                    ::initLibraries::
-                    repeat
-                        continue=false
-                        library.initQueue, tempQueue = {}, library.initQueue
-                        
-                        for _,func in ipairs(tempQueue) do
-                            if func(forceOptional) then
-                                continue=true --Something was initialized; therefore further systems might be able to initialize.
-                            else
-                                insert(library.initQueue, func) --If the queued initializer returns false, that means its requirement wasn't met, so we re-queue it.
-                            end
+    if library then
+        library.packed   = {}
+        library.yielded  = {}
+        library.declared = {}
+        function library:pack(name, ...) self.packed[name] = table.pack(...) end
+        function library:resume()
+            if self.yielded[1] then
+                local continue, tempQueue, forceOptional
+                ::initLibraries::
+                repeat
+                    continue=false
+                    self.yielded, tempQueue = {}, self.yielded
+                    
+                    for _,func in ipairs(tempQueue) do
+                        if func(forceOptional) then
+                            continue=true --Something was initialized; therefore further systems might be able to initialize.
+                        else
+                            insert(self.yielded, func) --If the queued initializer returns false, that means its requirement wasn't met, so we re-queue it.
                         end
-                    until not continue or not library.initQueue[1]
-                    if library.yielded[1] then
-                        library.yielded, tempQueue = {}, library.yielded
-                        for _,func in ipairs(tempQueue) do
-                            func() --unfreeze any custom initializers.
-                        end
-                    elseif not forceOptional then
-                        forceOptional = true
-                    else
-                        return
                     end
-                    goto initLibraries
-                end
-            end,
-            create = function(name, userFunc)
-                assert(type(name)=="string")
-                assert(type(userFunc)=="function")
-                assert(library.loaded[name]==nil)   --library by the same name must not be re-declared.
-                library.loaded[name] = false        --mark this library as declared, but not loaded.
-                return function()
-                    library.packData(name, userFunc(Require))  --pack return values to allow multiple values to be communicated.
-                    if library.loaded[name].n==0 then
-                        library.packData(name, true)           --No values were returned; therefore simply package the value as "true"
+                until not continue or not self.yielded[1]
+                if self.declared[1] then
+                    self.declared, tempQueue = {}, self.declared
+                    for _,func in ipairs(tempQueue) do
+                        func() --unfreeze any custom initializers.
                     end
+                elseif not forceOptional then
+                    forceOptional = true
+                else
+                    return
                 end
-            end,
-            yield = function(name)
-                assert(type(name)=="string")
-                library.packData(name, true) --declare this sequence so others can require it.
-                local co = coroutine.running()
-                insert(library.yielded, function() coroutine.resume(co) end)
-                coroutine.yield(co) --yields the calling function until after all currently-queued initializers have run.
+                goto initLibraries
             end
-        }
+        end
+        local function declareName(name, initialValue)
+            assert(type(name)=="string")
+            assert(library.packed[name]==nil)
+            library.packed[name] = initialValue and {true,n=1}
+        end
+        function library:create(name, userFunc)
+            assert(type(userFunc)=="function")
+            declareName(name, false)                --declare itself as a non-loaded library.
+            return function()
+                self:pack(name, userFunc(Require))  --pack return values to allow multiple values to be communicated.
+                if self.packed[name].n==0 then
+                    self:pack(name, true)           --No values were returned; therefore simply package the value as "true"
+                end
+            end
+        end
+        function library:declare(name)
+            declareName(name, true)                 --declare itself as a loaded library.
+            local co = coroutine.running()
+            insert(self.declared, function() coroutine.resume(co) end)
+            coroutine.yield(co) --yields the calling function until after all currently-queued initializers have run.
+        end
         local processRequirement
         function processRequirement(optional, requirement, explicitSource)
             if type(optional) == "string" then
@@ -201,7 +198,7 @@ do  --CONFIGURABLES:
             local function loadRequirement(unpack)
                 local package = rawget(source, requirement)
                 if not package and not explicitSource then
-                    package = library.loaded[requirement]
+                    package = library.packed[requirement]
                     if unpack and type(package)=="table" then
                         return table.unpack(package, 1, package.n) --using unpack allows any number of values to be returned by the required library.
                     end
@@ -217,14 +214,16 @@ do  --CONFIGURABLES:
                         if co then coroutine.resume(co) end --resume only if it was yielded in the first place.
                         return loaded
                     elseif printErrors then
-                        print(_ERROR..requirement)
+                        coroutine.resume(co, true)
                     end
                 end
             end
             if not checkReqs() then --only yield if the requirement doesn't already exist.
                 co = coroutine.running()
-                insert(library.initQueue, checkReqs)
-                coroutine.yield(co)
+                insert(library.yielded, checkReqs)
+                if coroutine.yield(co) then
+                    error("missing requirement: "..requirement) --handle the error within the user's function to get an accurate stack trace via the "try" function.
+                end
             end
             return loadRequirement(true)
         end
@@ -239,7 +238,7 @@ do  --CONFIGURABLES:
             local typeOf = type(initList)
             assert(typeOf=="table" or typeOf=="string")
             assert(type(userFunc) == "function")
-            OnInit(initList.name, function(use)
+            local function caller(use)
                 if typeOf=="string" then
                     use(initList)
                 else
@@ -252,8 +251,8 @@ do  --CONFIGURABLES:
                         end
                     end
                 end
-                return userFunc(use)
-            end)
+            end
+            if initList.name then OnInit(initList.name, caller) else OnInit(caller) end
         end
 
         local legacyTable = {}
