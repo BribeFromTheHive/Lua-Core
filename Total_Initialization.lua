@@ -1,4 +1,4 @@
--- Total Initialization v5.2.1 by Bribe
+-- Total Initialization v5.2.1.1 by Bribe
 
 -- Your one-stop shop for initialization and requirements.
 
@@ -187,7 +187,7 @@ do  --CONFIGURABLES:
             ::reindex::
             local subSource, subReq = requirement:match("([\x25w_]+)\x25.(.+)") --Check if user is requiring using "table.property" syntax
             if subSource and subReq then
-                source, requirement = processRequirement(optional, subSource, source), subReq --If the container is nil, yield until it is not.
+                source, requirement = processRequirement(subSource, source), subReq --If the container is nil, yield until it is not.
                 if type(source)=="table" then
                     explicitSource = source
                     goto reindex --check for further nested properties ("table.property.subProperty.anyOthers").
