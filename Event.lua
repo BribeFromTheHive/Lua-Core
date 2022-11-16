@@ -16,7 +16,7 @@
     --If GUI has a variable by the same name, it hooks it internally (automating the udg_ portion) to allow this to work:
     Game - Value of MyEvent becomes Equal to 0.00
 
-    NOTE - the value is the priority used in the event sequence, so higher-registered numbers run first, down to lower numbers.
+    NOTE - the value that MyEvent compares to is its priority in the event sequence, so events with higher numbers run first.
 
     --Enhanced event execution:
     Event.MyEvent.execute(promiseID:any, promiseSucceeded:boolean, ...)
@@ -76,7 +76,7 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
                     end
                 end,
                 priority, manualNext,
-                rawget(event, "promise") or rawset(event, "promise", __jarray()).promise --using a jarray allows Lua-Infused GUI to clean up expired promises.
+                rawget(event, "promise") or rawget(rawset(event, "promise", __jarray()), "promise") --using a jarray allows Lua-Infused GUI to clean up expired promises.
             )
         end
         return event --return the event object. Alternatively, the user can simply access this same value via Event.MyEventName
@@ -153,7 +153,7 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
         local udgName = "udg_"..name ---@type string|false
         local isGlobal = pcall(testGlobal, udgName)
 
-        udgName = (_G[udgName] or isGlobal) and udgName
+        udgName = (isGlobal or _G[udgName]) and udgName
         if udgName then --only proceed with this block if this is a GUI-compatible string.
             if isGlobal then
                 globals[udgName] = realID.create(name) --WC3 will complain if this is assigned to a non-numerical value, hence have to generate one.
@@ -185,7 +185,7 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
         end
 
         local function runEvent(promiseID, success, eventID, ...)
-            local promise = event.promise
+            local promise = rawget(event, "promise")
             currentEvent.data = eventID
             currentEvent.success = success
             if promise and promiseID then
@@ -197,6 +197,10 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
                 end
             end
             next(eventID, ...)
+        end
+
+        function event.registerOnNext(userFunc)
+            return event.registerOnValue(currentEvent.data, userFunc, true)
         end
 
         local runQueue
@@ -233,7 +237,7 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
                 end
                 assert(whichEvent)
                 local co = coroutine.running()
-                Event[whichEvent].registerOnValue(currentEvent.data, function() coroutine.resume(co) end, true)
+                Event[whichEvent].registerOnNext(function() coroutine.resume(co) end)
                 coroutine.yield()
             end)
             remap("udg_SleepEvent", nil, function(duration)
@@ -244,11 +248,11 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
                 currentEvent.data       = data
                 funcData.level          = 0
             end)
-            remap("udg_EventSuccess",
-                function() return currentEvent.success end,
-                function(value) currentEvent.success = value end
-            )
         end
+        remap("udg_EventSuccess",
+            function() return currentEvent.success end,
+            function(value) currentEvent.success = value end
+        )
         remap("udg_EventIndex", function() return currentEvent.data end)
         remap("udg_EventRecursion",
             function() return currentEvent.funcData.depth end,
