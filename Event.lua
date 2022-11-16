@@ -246,7 +246,7 @@ OnInit(function(require) --https://github.com/BribeFromTheHive/Lua-Core/blob/mai
                 PolledWait(duration)    --Yields the coroutine while preserving the event index for the user.
                 currentEvent.funcData   = funcData
                 currentEvent.data       = data
-                funcData.level          = 0
+                funcData.depth          = 0
             end)
         end
         remap("udg_EventSuccess",
