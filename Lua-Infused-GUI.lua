@@ -1,30 +1,39 @@
+if Debug and Debug.beginFile then Debug.beginFile "Influa" end
 --[[
-    Lua-Infused GUI with automatic memory leak resolution: Modernizing the experience for a better future for users of the Trigger Editor.
+    Influa (WarCraft 3 infused with Lua) automatically deals with memory leaks and modernizes the triggering & coding experience for users.
 
     Credits:
-        Bribe, Tasyen, Dr Super Good, HerlySQR
+        Bribe, Tasyen, Dr Super Good, HerlySQR, Eikonium
 
-    Transforming rects, locations, groups, forces and BJ hashtable wrappers into Lua tables, which are automatically garbage collected.
+    Transforms rects, locations, groups, forces and BJ hashtable wrappers into Lua tables, which are automatically garbage collected.
 
-    Provides RegisterAnyPlayerUnitEvent to cut down on handle count and simplify syntax for Lua users while benefitting GUI.
+    Provides RegisterAnyPlayerUnitEvent to cut down on handle count and simplify syntax for Lua users while benefitting GUI (this was also a very widely used vJass resource).
 
-    Provides GUI.enumUnitsInRect/InRange/Selected/etc. which replaces the first parameter with a function (which takes a unit), for immediate action without needing a separate group variable.
+    Optionally hides the "boolexpr" native type by having Filter/Condition/And/Or/Not return 'function'. While mainly intended to mitigate memory leaks via boolexpr recycling,
+    this also allows syntax like 'TriggerAddCondition(trig, function)', which was possible in vJass due to the way JassHelper automatically added the Filter/Condition wrapper.
     
-    Provides GUI.loopArray for safe iteration over a __jarray
+    Provides GUI.enumUnitsInRect/InRange/Selected/etc. which replaces the 'group' parameter with a function that takes a unit, allowing immediate action without a group variable.
     
-    Updated: 7 Nov 2022
-
+    Provides GUI.loopArray for safe iteration over a __jarray.
+    
+    Updated: 10th Dec 2022
+    
     Uses optionally:
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total_Initialization.lua
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global_Variable_Remapper.lua
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/UnitEvent.lua
 --]]
-GUI = {}
+
+---@diagnostic disable: lowercase-global, redundant-parameter, assign-type-mismatch, param-type-mismatch
+
+GUI = {typecast = function(self) return self end}
+
 do
 --Configurables
-local _USE_GLOBAL_REMAP = false --set to true if you want GUI to have extended functionality such as "udg_HashTableArray" (which gives GUI an infinite supply of shared hashtables)
-local _USE_UNIT_EVENT   = false --set to true if you have UnitEvent in your map and want to automatically remove units from their unit groups if they are removed from the game.
+local _USE_GLOBAL_REMAP = false  --set to true if you want GUI to have extended functionality such as "udg_HashTableArray" (which gives GUI an infinite supply of shared hashtables)
+local _USE_UNIT_EVENT   = false  --set to true if you have UnitEvent in your map and want to automatically remove units from their unit groups if they are removed from the game.
+local _USE_BOOLEXPRS    = OnInit --will only overwrite boolexprs if Total Initialization is in the map.
 
 --Define common variables to be utilized throughout the script.
 local _G = _G
@@ -74,6 +83,70 @@ do
         end
     end
 end
+
+if _USE_BOOLEXPRS then
+    local GUI = GUI
+    GUI.filter = Filter
+    Filter     = GUI.typecast
+    Condition  = GUI.typecast
+    And = function(func1, func2) return function() return func1() and func2() end end
+    Or  = function(func1, func2) return function() return func1() or  func2() end end
+    Not = function(func)         return function() return         not func()  end end
+    OnInit.main(function()
+        GUI.staticFilter = GUI.filter(
+            Debug and function() return Debug.try(GUI.tempFilter) end
+            or        function() return GUI.tempFilter() end
+        )
+    end)
+    function GUI.tempBoolExpr(func)
+        if func then
+            GUI.tempFilter = func
+            return GUI.staticFilter
+        end
+    end
+    local boolexprs = __jarray()    ---@type {[fun():boolean] : boolexpr}
+    local oldDest = DestroyBoolExpr
+    function DestroyBoolExpr(func)
+        if boolexprs[func] then
+            oldDest(boolexprs[func])
+            boolexprs[func] = nil
+        end
+    end
+    local function newBoolExpr(func)
+        if func then
+            if not boolexprs[func] then
+                if Debug then
+                    local old = func
+                    func = function()
+                        return Debug.try(old)
+                    end
+                end
+                boolexprs[func] = GUI.filter(func)
+            end
+            return boolexprs[func]
+        end
+    end
+    local oldTAC = TriggerAddCondition
+    function TriggerAddCondition(trig, func)
+        return oldTAC(trig, newBoolExpr(func))
+    end
+    local function hook3rd(name)
+        local old = _G[name]; _G[name] = function(a,b,func)
+            return old(a,b,newBoolExpr(func))
+        end
+    end
+    hook3rd "TriggerRegisterEnterRegion"
+    hook3rd "TriggerRegisterLeaveRegion"
+    local function hook4th(name)
+        local old = _G[name]; _G[name] = function(a,b,c,func)
+            return old(a,b,c,newBoolExpr(func))
+        end
+    end
+    hook4th "TriggerRegisterPlayerUnitEvent"
+    hook4th "TriggerRegisterFilterUnitEvent"
+    hook4th "TriggerRegisterUnitInRange"
+end
+
 --[=============[
   • HASHTABLES •
 --]=============]
@@ -85,8 +158,8 @@ do --[[
     "HashTableArray", which automatically creates hashtables for you as needed (so you don't have to
     initialize them each time).
 ]]
-    function StringHashBJ(s) return s end
-    function GetHandleIdBJ(id) return id end
+    StringHashBJ    = GUI.typecast
+    GetHandleIdBJ   = GUI.typecast
 
     local function load(whichHashTable,parentKey)
         local index = whichHashTable[parentKey]
@@ -163,7 +236,8 @@ end
   • LOCATIONS (POINTS IN GUI) •
 --]===========================]
 do
-    local oldLocation, location = Location
+    local oldLocation = Location
+    local location
     do
         local oldRemove = RemoveLocation
         local oldGetX   = GetLocationX
@@ -349,15 +423,10 @@ do
             end
         end
     end
-    function IsUnitInGroup(unit, group)
-        return unit and group and group.indexOf[unit]
-    end
-    function FirstOfGroup(group)
-        return group and group[1]
-    end
+    function IsUnitInGroup(unit, group) return unit and group and group.indexOf[unit] end
+    function FirstOfGroup(group) return group and group[1] end
 
-    local enumUnit
-    GetEnumUnit=function() return enumUnit end
+    local enumUnit; GetEnumUnit=function() return enumUnit end
 
     function GUI.forGroup(group, code)
         for i=1, #group do
@@ -366,12 +435,12 @@ do
     end
     ForGroup = function(group, code)
         if group and code then
-            local old = enumUnit
+            local cache = enumUnit
             GUI.forGroup(group, function(unit)
                 enumUnit=unit
-                code()
+                code(unit)
             end)
-            enumUnit=old
+            enumUnit=cache
         end
     end
     do
@@ -385,23 +454,35 @@ do
                 code(oldUnitAt(mainGroup, i))
             end
         end
-        for _,name in ipairs({
-            "OfType",
-            "OfPlayer",
-            "OfTypeCounted",
-            "InRect",
-            "InRectCounted",
-            "InRange",
-            "InRangeOfLoc",
-            "InRangeCounted",
-            "InRangeOfLocCounted",
-            "Selected"
-        }) do
+        local function createGroupAPI(name, pos)
             local varStr = "GroupEnumUnits"..name
-            local old=_G[varStr]
+            local new=_G[varStr]
+            if _USE_BOOLEXPRS then
+                local convert = GUI.tempBoolExpr
+                local old = new
+                if pos == 3 then
+                    new = function(a,b,filt,n)
+                        local cache = GUI.tempFilter
+                        old(a,b,convert(filt),n)
+                        GUI.tempFilter = cache
+                    end
+                elseif pos == 4 then
+                    new = function(a,b,c,filt,n)
+                        local cache = GUI.tempFilter
+                        old(a,b,c,convert(filt),n)
+                        GUI.tempFilter = cache
+                    end
+                else --pos==5
+                    new = function(a,b,c,d,filt,n)
+                        local cache = GUI.tempFilter
+                        old(a,b,c,d,convert(filt),n)
+                        GUI.tempFilter = cache
+                    end
+                end
+            end
             _G[varStr]=function(group, ...)
                 if group then
-                    old(mainGroup, ...)
+                    new(mainGroup, ...)
                     GroupClear(group)
                     groupAction(function(unit)
                         GroupAddUnit(group, unit)
@@ -410,10 +491,20 @@ do
             end
             --Provide API for Lua users who just want to efficiently run code, without caring about the group itself.
             GUI["enumUnits"..name]=function(code, ...)
-                old(mainGroup, ...)
+                new(mainGroup, ...)
                 groupAction(code)
             end
         end
+        createGroupAPI("OfType", 3)
+        createGroupAPI("OfPlayer", 3)
+        createGroupAPI("OfTypeCounted", 3)
+        createGroupAPI("InRect", 3)
+        createGroupAPI("InRectCounted", 3)
+        createGroupAPI("InRange", 5)
+        createGroupAPI("InRangeOfLoc", 4)
+        createGroupAPI("InRangeCounted", 5)
+        createGroupAPI("InRangeOfLocCounted", 4)
+        createGroupAPI("Selected", 3)
     end
     
     for _,name in ipairs {
@@ -483,7 +574,7 @@ end
   • RECTS (REGIONS IN GUI) •
 --]========================]
 do
-    local oldRect, rect = Rect
+    local oldRect, rect = Rect, nil
     function Rect(...) return {...} end
     
     local oldSetRect = SetRect
@@ -532,6 +623,20 @@ do
         local old = _G[varName]
         local func
         if index==1 then
+            if _USE_BOOLEXPRS and (varName == "EnumItemsInRect" or varName == "EnumDestructablesInRect") then
+                local convert = GUI.tempBoolExpr
+                func=function(rct, filt, code)
+                    oldSetRect(rect, unpack(rct))
+                    local cache = GUI.tempFilter
+                    old(rect, convert(filt), code)
+                    GUI.tempFilter = cache
+                end
+            else
+                func=function(rct, ...)
+                    oldSetRect(rect, unpack(rct))
+                    return old(rect, ...)
+                end
+            end
             func=function(rct, ...)
                 oldSetRect(rect, unpack(rct))
                 return old(rect, ...)
@@ -569,7 +674,7 @@ end
   • FORCES (PLAYER GROUPS IN GUI) •
 --]===============================]
 do
-    local oldForce, mainForce, initForce = CreateForce
+    local oldForce, mainForce, initForce = CreateForce, nil, nil
     initForce = function()
         initForce = DoNothing
         mainForce = oldForce()
@@ -650,18 +755,35 @@ do
         end)
         oldClear(mainForce)
     end
-    local function hookEnum(varStr)
-        local old=_G[varStr]
+    local function hookEnum(varStr, pos)
+        local new=_G[varStr]
+        if _USE_BOOLEXPRS then
+            local convert = GUI.tempBoolExpr
+            local old = new
+            if pos == 2 then
+                new = function(f,func,n)
+                    local cache = GUI.tempFilter
+                    old(f,convert(func),n)
+                    GUI.tempFilter = cache
+                end
+            else
+                new = function(f,p,func)
+                    local cache = GUI.tempFilter
+                    old(f,p,convert(func))
+                    GUI.tempFilter = cache
+                end
+            end
+        end
         _G[varStr]=function(force, ...)
             initForce()
-            old(mainForce, ...)
+            new(mainForce, ...)
             funnelEnum(force)
         end
     end
-    hookEnum("ForceEnumPlayers")
-    hookEnum("ForceEnumPlayersCounted")
-    hookEnum("ForceEnumAllies")
-    hookEnum("ForceEnumEnemies")
+    hookEnum("ForceEnumPlayers", 2)
+    hookEnum("ForceEnumPlayersCounted", 2)
+    hookEnum("ForceEnumAllies", 3)
+    hookEnum("ForceEnumEnemies", 3)
     CountPlayersInForceBJ=function(force) return #force end
     CountPlayersInForceEnum=nil
     
@@ -703,12 +825,7 @@ end
 do
     local cache=__jarray()
     function GUI.wrapTrigger(whichTrig)
-        local func=cache[whichTrig]
-        if not func then
-            func=function()if IsTriggerEnabled(whichTrig)and TriggerEvaluate(whichTrig)then TriggerExecute(whichTrig)end end
-            cache[whichTrig]=func
-        end
-        return func
+        return cache[whichTrig] or rawset(cache, whichTrig, function()if IsTriggerEnabled(whichTrig)and TriggerEvaluate(whichTrig)then TriggerExecute(whichTrig)end end)[whichTrig]
     end
 end
 do
@@ -793,6 +910,24 @@ end
 function SetHeroStat(whichHero, whichStat, value)
 	(whichStat==bj_HEROSTAT_STR and SetHeroStr or whichStat==bj_HEROSTAT_AGI and SetHeroAgi or SetHeroInt)(whichHero, value, true)
 end
+
+--Another implementation to correct checking if a unit is stunned. This one was also requested by Tasyen, but I made an optimization to only enable the hook when the variable is actually queried.
+if _USE_GLOBAL_REMAP then
+    local stunned = UNIT_TYPE_STUNNED
+    local old = IsUnitType
+    local function hook(unit, unitType)
+        IsUnitType = old
+        if unitType == stunned then
+            return GetUnitCurrentOrder(unit) == 851973
+        end
+        return old(unit, unitType)
+    end
+    GlobalRemap("UNIT_TYPE_STUNNED", function()
+        IsUnitType = hook
+        return stunned
+    end)
+end
+
 --The next part of the code is purely optional, as it is intended to optimize rather than add new functionality
 CommentString                           = nil
 RegisterDestDeathInRegionEnum           = nil
@@ -826,7 +961,6 @@ ClearMapMusicBJ                         = ClearMapMusic
 DestroyEffectBJ                         = DestroyEffect
 GetItemLifeBJ                           = GetWidgetLife -- This was just to type casting
 SetItemLifeBJ                           = SetWidgetLife -- This was just to type casting
-UnitRemoveBuffBJ                        = UnitRemoveAbility -- The buffs are abilities
 GetLearnedSkillBJ                       = GetLearnedSkill
 UnitDropItemPointBJ                     = UnitDropItemPoint
 UnitDropItemTargetBJ                    = UnitDropItemTarget
@@ -926,3 +1060,4 @@ GetDyingDestructable                    = GetTriggerDestructable -- I think they
 GetAbilityName                          = GetObjectName -- I think they just wanted a better name
 
 end
+if Debug and Debug.endFile then Debug.endFile() end
