@@ -1,12 +1,12 @@
-OnInit("PreciseWait", function(require)        --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total%20Initialization.lua
+OnInit("PreciseWait", function(require)        --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total_Initialization.lua
 
     local hook  = require.lazily "AddHook"     --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Hook.lua
-    local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global%20Variable%20Remapper.lua
+    local remap = require.lazily "GlobalRemap" --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Global_Variable_Remapper.lua
     if remap then
         require.recommends "GUI"               --https://github.com/BribeFromTheHive/Lua-Core/blob/main/Lua-Infused-GUI.lua
     end
     
-    --Precise Wait v1.5.2.1
+    --Precise Wait v1.5.3.0
     --This changes the default functionality of TriggerAddAction, PolledWait
     --and (because they don't work with manual coroutines) TriggerSleepAction and SyncSelections.
     
@@ -34,13 +34,13 @@ OnInit("PreciseWait", function(require)        --https://github.com/BribeFromThe
         remap("udg_WaitIndex", coroutine.running)
     end
     if not hook then
-        hook = function(varName, userFunc, _)
+        hook = function(varName, userFunc)
             local old = rawget(_G, varName)
             rawset(_G, varName, userFunc)
             return old
         end
     end
-    
+    ---@diagnostic disable: redundant-parameter
     hook("PolledWait", wait, _WAIT_PRIORITY)
     hook("TriggerSleepAction", wait, _WAIT_PRIORITY)
     
@@ -58,6 +58,6 @@ OnInit("PreciseWait", function(require)        --https://github.com/BribeFromThe
 
     hook("TriggerAddAction", function(trig, func)
         --Return a function that will actually be added as the triggeraction, which itself wraps the actual function in a coroutine.
-        return TriggerAddAction.original(trig, function() coroutine.resume(coroutine.create(func)) end)
+        return TriggerAddAction.original(trig, Debug and function() coroutine.wrap(Debug.try)(func) end or function() coroutine.wrap(func)() end)
     end, _ACTION_PRIORITY)
-end)
+end, OnInit'end')
