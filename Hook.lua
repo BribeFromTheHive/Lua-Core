@@ -2,7 +2,7 @@ if Debug then Debug.beginFile "Hook" end do local addHook --[[
 ——————————————————————————————————————————————————————————————
     Hook version 7
     Created by:   Bribe
-    Contributors: Jampion and Eikonium
+    Contributors: Jampion, Eikonium, MyPad, WRDA
 ————————————————————————————————————————————————————————————]]
 ---@param key        any        Usually a string (the name of the old function you wish to hook)
 ---@param callback   function   The function you want to run when the native is called. The args and return values would normally mimic the function that is hooked.
@@ -17,8 +17,8 @@ function AddHook(key, callback, priority, host, default, metatable)
     return self.old, self.remove
 end
 
-local doNothing,     hostMT,         _G, rawset, setmetatable, hosts =
-      function()end, { __mode="v" }, _G, rawset, setmetatable, nil
+local doNothing,     hostMT,     _G, rawset, setmetatable, hosts
+= function()end, { __mode="v" }, _G, rawset, setmetatable, nil
 
 local function reindex(hooks, from)
     for i=from, #hooks do
