@@ -1,12 +1,45 @@
--- Total Initialization Test by Bribe
+if Debug then Debug.beginFile "Total Initialization" end
+--——————————————————————————————————————————————————————
+-- Total Initialization version 5.3 Preview
+-- Created by: Bribe
+-- Contributors: Eikonium, HerlySQR, Tasyen, Luashine, Forsakn
+-- Inspiration: Almia, ScorpioT1000, Troll-Brain
+--————————————————————————————————————————————————————————————
+---@class OnInit
+---@field overload  OnInitFunc
+---@field root      OnInitFunc
+---@field config    OnInitFunc
+---@field main      OnInitFunc
+---@field global    OnInitFunc
+---@field trig      OnInitFunc
+---@field map       OnInitFunc
+---@field final     OnInitFunc
+---@field module    OnInitFunc
+OnInit = {}
 
--- Your one-stop shop for initialization and requirements.
+---@alias OnInitCallback fun(require?: Require):any?
+---@alias OnInitFunc fun(initCallback_or_libraryName: OnInitCallback|string, initCallback?: OnInitCallback, debugLineNum?: integer)
 
-do  --CONFIGURABLES:
-    local library = {} --Change this to false if you don't use "Require" nor the OnInit.library API.
+---@generic Require.name: function
+---@alias OnInitRequirement async fun(requirementName:`Require.name`, explicitSource?: table):Require.name
 
-    local function assignLegacyAPI(_ENV, OnInit) local _ENV = _ENV --needed to circumvent bug with Lua Language Server. Vote on this issue here: https://github.com/sumneko/lua-language-server/issues/1715
+--"Require" only works within an OnInit callback.
+--
+--Syntax for strict requirements that throw errors if not found: Require "SomeLibrary"
+--
+--Syntax for requirements that give up if the required library or variable are not found: Require.optionally "SomeLibrary"
+---@class Require: { [string]: OnInitRequirement }
+---@field overload OnInitRequirement
+---@field strict OnInitRequirement
+Require = {}
 
+do
+    local library = {} --You can change this to false if you don't use "Require" nor the OnInit.library API.
+
+    ---@diagnostic disable: global-in-nil-env, assign-type-mismatch
+
+    --CONFIGURABLE LEGACY API FUNCTION:
+    local function assignLegacyAPI(_ENV, OnInit)
         OnGlobalInit = OnInit; OnTrigInit = OnInit.trig; OnMapInit = OnInit.map; OnGameStart = OnInit.final              --Global Initialization Lite API
         --OnMainInit = OnInit.main; OnLibraryInit = OnInit.library; OnGameInit = OnInit.final                            --short-lived experimental API
         --onGlobalInit = OnInit; onTriggerInit = OnInit.trig; onInitialization = OnInit.map; onGameStart = OnInit.final  --original Global Initialization API
@@ -14,18 +47,6 @@ do  --CONFIGURABLES:
     end
     --END CONFIGURABLES
 
-    --"Require" only works within an OnInit callback.
-    --
-    --Syntax for strict requirements that throw errors if not found: Require "SomeLibrary"
-    --
-    --Syntax for requirements that give up if the required library or variable are not found: Require.optionally "SomeLibrary"
-    ---@class Require
-    ---@overload async fun(requirementName:string):any
-    ---@field __index fun(optionalName:string):async fun(requirementName:string):any Enable syntax for Require.optionally "SomeRequirement"
-    Require = {}
-
-    OnInit = {}
-    
     local _G, rawget, insert = _G, rawget, table.insert
 
     local call   = try or pcall --'try' is extremely useful; found on https://www.hiveworkshop.com/threads/debug-utils-ingame-console-etc.330758/post-3552846
@@ -64,15 +85,24 @@ do  --CONFIGURABLES:
                 for _,func in ipairs(library.yielded) do
                     func(nil, true) --run errors for missing requirements.
                 end
+                for _,func in pairs(library.modules) do
+                    func(true) --run errors for modules that aren't required.
+                end
             end
-            OnInit=nil;Require=nil  --remove API from _G
+            OnInit=nil;Require=nil
         end)
     end
-    local function addUserFunc(initName, libraryName, func)
+    local function addUserFunc(initName, libraryName, func, debugLineNum, incDebugLevel)
         if not func then
             func = libraryName
-        elseif library then
-            func = library:create(libraryName, func)
+        else
+            assert(type(libraryName)=="string")
+            if debugLineNum and Debug then
+                Debug.beginFile(libraryName, incDebugLevel and 7 or 6, debugLineNum)
+            end
+            if library then
+                func = library:create(libraryName, func)
+            end
         end
         assert(type(func) == "function")
         initFuncQueue[initName] = initFuncQueue[initName] or {}
@@ -94,8 +124,10 @@ do  --CONFIGURABLES:
         ---OnInit.final occurs immediately after the loading screen has disappeared, and the game has started.
         ---@param libraryNameOrInitFunc string|fun(require?:Require):any
         ---@param userInitFunc? fun(require?:Require):any
-        return function(libraryNameOrInitFunc, userInitFunc)
-            addUserFunc(name, libraryNameOrInitFunc, userInitFunc)
+        ---@param debugLineNum? integer
+        ---@param incDebugLevel? boolean
+        return function(libraryNameOrInitFunc, userInitFunc, debugLineNum, incDebugLevel)
+            addUserFunc(name, libraryNameOrInitFunc, userInitFunc, debugLineNum, incDebugLevel)
         end
     end
     OnInit.global = createInit "InitGlobals"
@@ -103,14 +135,17 @@ do  --CONFIGURABLES:
     OnInit.map    = createInit "RunInitializationTriggers"
     OnInit.final  = createInit "MarkGameStarted"
 
-    function OnInit:__call(libraryNameOrInitFunc, userInitFunc)
+    setmetatable(OnInit, {__call = function(self, libraryNameOrInitFunc, userInitFunc, debugLineNum)
         if userInitFunc or type(libraryNameOrInitFunc)=="function" then
-            self.global(libraryNameOrInitFunc, userInitFunc) --Calling OnInit directly defaults to OnInit.global (AKA OnGlobalInit)
+            self.global(libraryNameOrInitFunc, userInitFunc, debugLineNum, true) --Calling OnInit directly defaults to OnInit.global (AKA OnGlobalInit)
+        elseif libraryNameOrInitFunc == "end" then
+            return Debug and Debug.getLine(3)
         elseif library then
             library:declare(libraryNameOrInitFunc) --API handler for OnInit "Custom initializer"
+        else
+            error("Bad OnInit args: "..tostring(libraryNameOrInitFunc) .. ", " .. tostring(userInitFunc))
         end
-    end
-    setmetatable(OnInit, OnInit)
+    end})
 
     do --if you don't need the initializers for "root", "config" and "main", you can delete this do...end block.
         local gmt = getmetatable(_G) or getmetatable(setmetatable(_G, {}))
@@ -141,6 +176,7 @@ do  --CONFIGURABLES:
         library.packed   = {}
         library.yielded  = {}
         library.declared = {}
+        library.modules  = {}
         function library:pack(name, ...) self.packed[name] = table.pack(...) end
         function library:resume()
             if self.yielded[1] then
@@ -218,6 +254,9 @@ do  --CONFIGURABLES:
             local function loadRequirement(unpack)
                 local package = rawget(source, requirement)
                 if not package and not explicitSource then
+                    if library.modules[requirement] then
+                        library.modules[requirement]()
+                    end
                     package = library.packed[requirement]
                     if unpack and type(package)=="table" then
                         return table.unpack(package, 1, package.n) --using unpack allows any number of values to be returned by the required library.
@@ -242,15 +281,36 @@ do  --CONFIGURABLES:
                 co = coroutine.running()
                 insert(library.yielded, checkReqs)
                 if coroutine.yield(co) then
-                    error("missing requirement: "..requirement) --handle the error within the user's function to get an accurate stack trace via the "try" function.
+                    error("Missing Requirement: "..requirement) --handle the error within the user's function to get an accurate stack trace via the "try" function.
                 end
             end
             return loadRequirement(true)
         end
-        
-        Require.__call = processRequirement
-        Require.__index = function() return processRequirement end --syntax is not working on hover - issue reported at https://github.com/sumneko/lua-language-server/issues/1716
-        setmetatable(Require, Require)
+        function Require.strict(name, explicitSource) return processRequirement(nil, name, explicitSource) end
+        setmetatable(Require, { __call = processRequirement, __index = function() return processRequirement end })
+
+        local module  = createInit "module"
+
+        ---@param name string
+        ---@param func? fun(require?:Require):any
+        ---@param debugLineNum? integer
+        OnInit.module = function(name, func, debugLineNum)
+            if func then
+                local userFunc = func
+                func = function(require)
+                    local co = coroutine.running()
+                    library.modules[name] = function()
+                        library.modules[name] = nil
+                        coroutine.resume(co)
+                    end
+                    if coroutine.yield() then
+                        error("Module declared but not required: "..name) --works similarly to Go; if you don't need a module, then don't include it in your map.
+                    end
+                    return userFunc(require)
+                end
+            end
+            module(name, func, debugLineNum)
+        end
     end
 
     if assignLegacyAPI then --This block handles legacy code.
@@ -283,7 +343,8 @@ do  --CONFIGURABLES:
         assignLegacyAPI(legacyTable, OnInit)
         for key,func in pairs(legacyTable) do rawset(_G, key, func) end
         OnInit.final(function()
-            for key in pairs(legacyTable) do _G[key] = nil end
+            for key in pairs(legacyTable) do rawset(_G, key, nil) end
         end)
     end
 end
+if Debug then Debug.endFile() end
