@@ -16,7 +16,7 @@ if Debug then Debug.beginFile "Influa" end
     
     Provides GUI.loopArray for safe iteration over a __jarray.
     
-    Updated: 29th Dec 2022
+    Updated: 13th Jan 2022
     
     Uses optionally:
         https://github.com/BribeFromTheHive/Lua-Core/blob/main/Total_Initialization.lua
